@@ -56,3 +56,45 @@
 
 - 用户指定伪标签目录统一使用 `/root/autodl-tmp/out`。
 - 已将三个 hypes YAML 中的 `pseudo_lable_path` 更新为 `/root/autodl-tmp/out`。
+
+## 2026-05-30 14:45:35 +08:00
+
+- 用户要求服务器运行训练命令时同时生成终端日志文件。
+- 约定：训练终端输出保存到项目根目录 `log/` 文件夹；模型 checkpoint 和 TensorBoard 仍由原代码保存到 `opencood/logs/`。
+
+## 2026-05-30 15:07:29 +08:00
+
+- 本次重新阅读项目并核对当前进度。
+- 当前项目结构：根目录含 `README.md`、`requirements.txt`、`setup.py`、`docs/`、`logreplay/`、`opencood/`；核心训练/推理代码集中在 `opencood/tools/`、模型在 `opencood/models/`、数据集逻辑在 `opencood/data_utils/datasets/`。
+- `git status --short` 当前仅显示 `codex.md` 被修改；三个 hypes YAML 目前工作区未显示未提交改动。
+- 已确认三个关键 YAML 仍保持服务器路径配置：
+  - `point_pillar_intermediate_fusion_lable_free.yaml`: `root_dir=/root/autodl-tmp/opv2v/train`，`validate_dir=/root/autodl-tmp/opv2v/train`，`pseudo_lable_path=/root/autodl-tmp/out`。
+  - `point_pillar_intermediate_fusion.yaml`: `root_dir=/root/autodl-tmp/opv2v/train`，`validate_dir=/root/autodl-tmp/opv2v/validate`，`pseudo_lable_path=/root/autodl-tmp/out`。
+  - `point_pillar_intermediate_fusion_dota.yaml`: `root_dir=/root/autodl-tmp/opv2v/train`，`validate_dir=/root/autodl-tmp/opv2v/validate`，`iterative_training=True`，`pseudo_lable_path=/root/autodl-tmp/out`。
+- 需要后续注意：
+  - README 命令中写的是 `point_pillar_intermediate_fusion_label_free.yaml`，但仓库实际文件名为 `point_pillar_intermediate_fusion_lable_free.yaml`。
+  - `opencood/tools/MBE.py` 和 `opencood/tools/box_score_for_mbe.py` 仍有作者本地硬编码路径，后续若要服务器跑完整 MBE 流程，需要参数化输入/输出路径。
+  - `requirements.txt` 仍未锁定前面建议的 `timm==0.4.12`、`cython==0.29.36`，服务器安装时需继续留意 Python 3.7 兼容性。
+
+## 2026-05-30 15:08:55 +08:00
+
+- 用户希望在 V2V4Real（OPV2V format）数据集上复现。
+- 已核对本项目数据读取逻辑：`BaseDataset` 根据 `root_dir`/`validate_dir` 扫描场景目录，每个场景下读取 CAV 目录中的同名 `.yaml` 和 `.pcd` 文件；这与官方 V2V4Real OPV2V format 的 `v2v4real/train`、`v2v4real/validate`、`v2v4real/test` 结构兼容。
+- 建议不要覆盖当前 OPV2V 配置，而是复制三份 V2V4Real 专用 YAML，将数据目录改为服务器上的 V2V4Real 路径，例如 `/root/autodl-tmp/v2v4real/train`、`/root/autodl-tmp/v2v4real/validate`、`/root/autodl-tmp/v2v4real/test`，伪标签目录单独使用 `/root/autodl-tmp/out_v2v4real`。
+- 后续完整复现仍需先参数化 `MBE.py` 和 `box_score_for_mbe.py` 的输入/输出路径，否则 MBE 阶段仍会使用作者本地硬编码路径。
+
+## 2026-05-30 15:11:29 +08:00
+
+- 用户提供 V2V4Real 数据目录截图：数据位于 `v2v4real/Data/` 下，包含 `train/`、`val/`、`test/` 三个子目录。
+- 该结构仍可被当前数据读取逻辑使用；需要注意验证集目录名是 `val`，不是官方说明和此前建议中的 `validate`。
+- V2V4Real 专用 YAML 应改为类似：`root_dir=/root/autodl-tmp/v2v4real/Data/train`，训练验证 `validate_dir=/root/autodl-tmp/v2v4real/Data/val`，最终测试时将 checkpoint 下 `config.yaml` 的 `validate_dir` 改为 `/root/autodl-tmp/v2v4real/Data/test`。
+
+## 2026-05-30 15:13:42 +08:00
+
+- 已生成三份 V2V4Real 专用 YAML，避免覆盖当前 OPV2V 配置：
+  - `opencood/hypes_yaml/point_pillar_intermediate_fusion_lable_free_v2v4real.yaml`
+  - `opencood/hypes_yaml/point_pillar_intermediate_fusion_v2v4real.yaml`
+  - `opencood/hypes_yaml/point_pillar_intermediate_fusion_dota_v2v4real.yaml`
+- 三份配置均使用 `root_dir=/root/autodl-tmp/v2v4real/Data/train` 和 `pseudo_lable_path=/root/autodl-tmp/out_v2v4real`。
+- label-free 配置的 `validate_dir` 设置为 `/root/autodl-tmp/v2v4real/Data/train`，用于后续在训练集上生成伪标签；普通训练和 DOtA 迭代训练配置的 `validate_dir` 设置为 `/root/autodl-tmp/v2v4real/Data/val`。
+- 已本地轻量加载验证三份 YAML：`yaml_utils.load_yaml` 可正常解析，派生参数为 `anchor_args.W=704`、`H=200`、`grid_size=[704, 200, 1]`。
