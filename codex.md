@@ -86,6 +86,24 @@
   - 对点数不足导致的 `ConvexHull` 异常做容错。
 - 本地轻量验证：`python -m py_compile opencood/tools/MBE.py` 通过。
 
+## 2026-05-30 19:09:45 +08:00
+
+- 按用户要求，将 `opencood/tools/MBE.py` 重写为与 `opencood/tools/mbe_v2v4real.py` 类似的顺序处理风格，但默认路径与描述改为 OPV2V。
+- 新版 `MBE.py` 入口参数为 `--data_dir`、`--pred_dir`、`--out_dir`、`--window`、`--max_scenarios`、`--keep_ground`。
+- 新版会同时输出：
+  - `out_pseduo_labels_v1_{idx}.npy`
+  - `out_pseduo_labels_noise_v1_{idx}.npy`
+  - `out_pseduo_labels_with_score_v4_{idx}.npy`
+- `out_pseduo_labels_noise_with_score_v4_{idx}.npy`
+- 初步审查：整体流程符合论文的“初始伪标签 -> MBE 区分高/低质量标签 -> 后续 LICL/迭代训练”管线，但当前实现与论文公式仍有两个严格差异：ICE 距离权重使用距离本身而非反距离平方，高/宽/长三维均被缩放而论文只缩放 BEV 平面尺寸。
+
+## 2026-05-30 19:11:02 +08:00
+
+- 按论文公式修正 `MBE.py`：
+  - ICE 信息置信度改为反距离平方：`1 / ((xv - xi)^2 + (yv - yi)^2)`，再做归一化加权，近距离 agent 权重更高。
+  - 多尺度缩放只作用于 BEV 平面尺寸 `l,w`，不再缩放高度 `h`。
+- 本地轻量验证：`python -m py_compile opencood/tools/MBE.py` 通过。
+
 ## 2026-05-30 15:07:29 +08:00
 
 - 本次重新阅读项目并核对当前进度。

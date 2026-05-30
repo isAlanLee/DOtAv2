@@ -1,90 +1,96 @@
 import argparse
-import time
+import math
 import os
-import open3d as o3d
+
 import numpy as np
-import yaml
-import re
-from scipy.spatial import KDTree
+import open3d as o3d
+import scipy
+from scipy.spatial import ConvexHull, Delaunay
 from sklearn import linear_model
 from tqdm import tqdm
-import scipy
-from scipy.spatial import Delaunay
-from functools import partial
-import multiprocessing
-import math
-from scipy.spatial import ConvexHull
+
+from opencood.hypes_yaml.yaml_utils import load_yaml
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description='MBE pseudo-label filtering')
-    parser.add_argument('--dataset_dir', type=str,
-                        default='/root/autodl-tmp/opv2v/train',
-                        help='OPV2V train split directory')
-    parser.add_argument('--pseudo_label_dir', type=str,
-                        default='/root/autodl-tmp/out/pre_box_test_full',
-                        help='directory containing pre_{idx}.npy pseudo labels')
-    parser.add_argument('--output_dir', type=str,
-                        default='/root/autodl-tmp/out',
-                        help='directory to save filtered pseudo labels')
-    parser.add_argument('--num_workers', type=int, default=16,
-                        help='number of multiprocessing workers')
-    parser.add_argument('--max_scenarios', type=int, default=None,
-                        help='debug option: process only first N scenarios')
-    return parser.parse_args()
+def pcd_to_np(pcd_file):
+    pcd = o3d.io.read_point_cloud(pcd_file)
+    xyz = np.asarray(pcd.points)
+    intensity = np.expand_dims(np.asarray(pcd.colors)[:, 0], -1)
+    return np.asarray(np.hstack((xyz, intensity)), dtype=np.float32)
 
 
-def in_hull(p, hull):
-    """
-    :param p: (N, K) test points
-    :param hull: (M, K) M corners of a box
-    :return (N) bool
-    """
-    try:
-        if not isinstance(hull, Delaunay):
-            hull = Delaunay(hull)
-        flag = hull.find_simplex(p) >= 0
-    except scipy.spatial.qhull.QhullError:
-        print('Warning: not a hull %s' % str(hull))
-        flag = np.zeros(p.shape[0], dtype=np.bool)
+def pose_to_matrix(pose):
+    pose = np.asarray(pose)
+    if pose.shape == (4, 4):
+        return pose
 
-    return flag
+    x, y, z, roll, yaw, pitch = pose[:]
+    c_y = np.cos(np.radians(yaw))
+    s_y = np.sin(np.radians(yaw))
+    c_r = np.cos(np.radians(roll))
+    s_r = np.sin(np.radians(roll))
+    c_p = np.cos(np.radians(pitch))
+    s_p = np.sin(np.radians(pitch))
+
+    matrix = np.identity(4)
+    matrix[0, 3] = x
+    matrix[1, 3] = y
+    matrix[2, 3] = z
+    matrix[0, 0] = c_p * c_y
+    matrix[0, 1] = c_y * s_p * s_r - s_y * c_r
+    matrix[0, 2] = -c_y * s_p * c_r - s_y * s_r
+    matrix[1, 0] = s_y * c_p
+    matrix[1, 1] = s_y * s_p * s_r + c_y * c_r
+    matrix[1, 2] = -s_y * s_p * c_r + c_y * s_r
+    matrix[2, 0] = s_p
+    matrix[2, 1] = -c_p * s_r
+    matrix[2, 2] = c_p * c_r
+    return matrix
+
+
+def get_registration_angle(mat):
+    cos_theta, sin_theta = mat[0, 0], mat[1, 0]
+    cos_theta = np.clip(cos_theta, -1, 1)
+    theta_cos = np.arccos(cos_theta)
+    return theta_cos if sin_theta >= 0 else 2 * np.pi - theta_cos
+
+
+def points_to_world(points, pose):
+    pose_mat = pose_to_matrix(pose)
+    points_h = np.hstack((points[:, :3], np.ones((points.shape[0], 1))))
+    points_w = np.dot(pose_mat, points_h.T).T
+    if points.shape[1] > 3:
+        return np.hstack((points_w[:, :3], points[:, 3:]))
+    return points_w[:, :3]
+
+
+def boxes_to_world(boxes, ego_pose):
+    if boxes.shape[0] == 0:
+        return boxes.copy()
+
+    pose_mat = pose_to_matrix(ego_pose)
+    boxes_w = boxes.copy()
+    centers_h = np.hstack((boxes[:, :3], np.ones((boxes.shape[0], 1))))
+    centers_w = np.dot(pose_mat, centers_h.T).T
+    boxes_w[:, :3] = centers_w[:, :3]
+    boxes_w[:, 6] = boxes[:, 6] + get_registration_angle(pose_mat)
+    return boxes_w
 
 
 def boxes_to_corners_3d(boxes3d):
-    """
-        7 -------- 4
-       /|         /|
-      6 -------- 5 .
-      | |        | |
-      . 3 -------- 0
-      |/         |/
-      2 -------- 1
-    Args:
-        boxes3d:  (N, 7) [x, y, z, dx, dy, dz, heading], (x, y, z) is the box center
-
-    Returns:
-    """
     template = np.array((
         [1, 1, -1], [1, -1, -1], [-1, -1, -1], [-1, 1, -1],
         [1, 1, 1], [1, -1, 1], [-1, -1, 1], [-1, 1, 1],
     )) / 2
 
     corners3d = boxes3d[:, None, 3:6] * template[None, :, :]
-    corners3d = rotate_points_along_z(corners3d.reshape(-1, 8, 3), boxes3d[:, 6]).reshape(-1, 8, 3)
+    corners3d = rotate_points_along_z(
+        corners3d.reshape(-1, 8, 3), boxes3d[:, 6]).reshape(-1, 8, 3)
     corners3d += boxes3d[:, None, 0:3]
-
     return corners3d
 
 
 def rotate_points_along_z(points, angle):
-    """
-    Args:
-        points: (B, N, 3 + C)
-        angle: (B), angle along z-axis, angle increases x ==> y
-    Returns:
-
-    """
     cosa = np.cos(angle)
     sina = np.sin(angle)
     zeros = np.zeros_like(angle)
@@ -95,34 +101,33 @@ def rotate_points_along_z(points, angle):
         zeros, zeros, ones
     ), axis=1).reshape(-1, 3, 3).astype(float)
     points_rot = np.matmul(points[:, :, 0:3], rot_matrix)
-    points_rot = np.concatenate((points_rot, points[:, :, 3:]), axis=-1)
-    return points_rot
+    return np.concatenate((points_rot, points[:, :, 3:]), axis=-1)
 
 
-def get_registration_angle(mat):
-    cos_theta, sin_theta = mat[0, 0], mat[1, 0]
-    cos_theta = np.clip(cos_theta, -1, 1)  
-    theta_cos = np.arccos(cos_theta)
-    return theta_cos if sin_theta >= 0 else 2 * np.pi - theta_cos
+def in_hull(points, hull):
+    if points.shape[0] == 0:
+        return np.zeros((0,), dtype=bool)
+    try:
+        if not isinstance(hull, Delaunay):
+            hull = Delaunay(hull)
+        return hull.find_simplex(points) >= 0
+    except scipy.spatial.qhull.QhullError:
+        return np.zeros(points.shape[0], dtype=bool)
 
 
-import random
-
-
-def remove_ground_points(point_cloud, max_iterations=100, distance_threshold=0.2):
-    if len(point_cloud) < 3:
+def remove_ground_points(point_cloud, max_iterations=100,
+                         distance_threshold=0.2):
+    if point_cloud.shape[0] < 3:
         return point_cloud
 
     ground_points = []
-    non_ground_points = []
-
+    non_ground_points = point_cloud
     for _ in range(max_iterations):
-        indices = np.random.choice(len(point_cloud), 3, replace=False)
+        indices = np.random.choice(point_cloud.shape[0], 3, replace=False)
         candidate_points = point_cloud[indices]
 
         model = linear_model.RANSACRegressor()
         model.fit(candidate_points[:, :2], candidate_points[:, 2])
-
         distances = np.abs(model.predict(point_cloud[:, :2]) - point_cloud[:, 2])
 
         if np.sum(distances < distance_threshold) > len(ground_points):
@@ -131,391 +136,264 @@ def remove_ground_points(point_cloud, max_iterations=100, distance_threshold=0.2
 
     return non_ground_points
 
-def max_consecutive_zeros(lst):
-    max_count = 0  
-    current_count = 0  
-    for num in lst:
-        if num == 0:
-            current_count += 1 
-            max_count = max(max_count, current_count)  
-        else:
-            current_count = 0  
-    return max_count
+
+def safe_ratio(a, b):
+    if abs(b) < 1e-6:
+        return 0.0
+    return a / b
 
 
+def information_confidence(box, cav_position):
+    distance_sq = np.sum((box[:2] - cav_position[:2]) ** 2)
+    return 1.0 / max(distance_sq, 1e-6)
 
 
-def classify_state(inter_points_number_total, convex_hull_number_total, distance_total):
-    
+def classify_state(inter_points_number_total, convex_hull_number_total,
+                   confidence_total):
+    confidence_sum = sum(confidence_total)
+    if not inter_points_number_total or confidence_sum < 1e-6:
+        return 0
 
-    c1 = 0
-    c2 = 0
-
-
+    c1 = 0.0
+    c2 = 0.0
     for i in range(len(inter_points_number_total)):
-        score_r_1 = ( inter_points_number_total[i][0] - inter_points_number_total[i][1] ) / inter_points_number_total[i][1]
-        score_r_2 = ( inter_points_number_total[i][1] - inter_points_number_total[i][2] ) / inter_points_number_total[i][2]
-        score_r = ( score_r_1 + score_r_2 ) / 2
+        inter = inter_points_number_total[i]
+        hull = convex_hull_number_total[i]
+        score_r_1 = safe_ratio(inter[0] - inter[1], inter[1])
+        score_r_2 = safe_ratio(inter[1] - inter[2], inter[2])
+        score_r = (score_r_1 + score_r_2) / 2
+        score_0_1 = safe_ratio(hull[2] - hull[3], hull[2])
+        score_0_2 = safe_ratio(hull[3] - hull[4], hull[3])
+        score_0 = (score_0_1 + score_0_2) / 2
+        confidence_weight = confidence_total[i] / confidence_sum
+        c1 += score_r * confidence_weight
+        c2 += score_0 * confidence_weight
 
-        score_0_1 = ( convex_hull_number_total[i][2] - convex_hull_number_total[i][3] ) / convex_hull_number_total[i][2]
-        score_0_2 = ( convex_hull_number_total[i][3] - convex_hull_number_total[i][4] ) / convex_hull_number_total[i][3]
-        score_0 = ( score_r_1 + score_r_2 ) / 2
-
-        score_d = distance_total[i]/ sum(distance_total)
-
-        c1 += score_r * score_d
-        c2 += score_0 * score_d
-
-    if c1 < 0.1 and c2 > 0.7:
-        return 1 
-
-    return 0 
-
-def box_filter(pseduo_labels, multi_agent_point, ok, now_timestamp):
-    if pseduo_labels.ndim != 2 or pseduo_labels.shape[1] < 2:
-        raise ValueError("pseduo_labels must be a 2D array with at least 2 columns")
-
-    num_box = pseduo_labels.shape[0]
-    new_boxes = []
-    # kdtree_points = [KDTree(multi_frame_points[i][:, :2]) for i in range(len(multi_frame_points))]
-
-    for j in range(num_box):
-
-        distance_total = []
-        for car_ok in range(len(ok)):
-            po = ok[car_ok].reshape(1,3)
-            distance_total.append(np.linalg.norm(pseduo_labels[j][:2] - po[:, :2]))
+    return 1 if c1 < 0.1 and c2 > 0.7 else 0
 
 
+def box_filter(pseudo_labels_world, multi_agent_point, cav_positions,
+               frame_idx):
+    if pseudo_labels_world.shape[0] == 0:
+        return np.zeros((0,), dtype=bool)
 
+    keep = []
+    scale_var = [1.5, 1.2, 1.0, 0.8, 0.5]
+    for box in pseudo_labels_world:
+        confidence_total = [
+            information_confidence(box, cav_position)
+            for cav_position in cav_positions
+        ]
         inter_points_number_total = []
         convex_hull_number_total = []
-        scale_var = [1.5, 1.2, 1.0, 0.8, 0.5]
-        # color_list = ['red', 'blue','green']
-        for car_num in range(len(ok)):
-
-            inter_points_number_val_scal = []
-            convex_hull_number_val_scal = []
-
-            for scale in range(len(scale_var)):
-                # scale_box = pseduo_labels[j][:7].copy()
+        for cav_idx in range(len(cav_positions)):
+            inter_counts = []
+            hull_counts = []
+            points = multi_agent_point[cav_idx][frame_idx][:, :3]
+            for scale in scale_var:
                 scale_box = np.ones(7)
-                scale_box[:3] = pseduo_labels[j][:3]
-                scale_box[3:6] = pseduo_labels[j][3:6] * scale_var[scale]
-                scale_box[6] = pseduo_labels[j][6]
-                # vi.add_3D_boxes(scale_box.reshape(-1, 7), color='red')
-                inter_mask_scale = in_hull(multi_agent_point[car_num][now_timestamp][:, :3],
-                                 boxes_to_corners_3d(scale_box.reshape(-1, 7)).reshape(-1, 3))
-                inter_points_scale = multi_agent_point[car_num][now_timestamp][:, :3][inter_mask_scale]
-                try:
-                    convex_hull_scale = inter_points_scale[ConvexHull(inter_points_scale).vertices]
-                    convex_hull_count = convex_hull_scale.shape[0]
-                except Exception:
-                    convex_hull_count = 0
+                scale_box[:3] = box[:3]
+                scale_box[3:5] = box[3:5] * scale
+                scale_box[5] = box[5]
+                scale_box[6] = box[6]
+                mask = in_hull(
+                    points,
+                    boxes_to_corners_3d(scale_box.reshape(-1, 7)).reshape(-1, 3))
+                inter_points = points[mask]
+                inter_counts.append(inter_points.shape[0])
+                if inter_points.shape[0] >= 4:
+                    try:
+                        hull_counts.append(
+                            inter_points[ConvexHull(inter_points).vertices].shape[0])
+                    except scipy.spatial.qhull.QhullError:
+                        hull_counts.append(0)
+                else:
+                    hull_counts.append(0)
+
+            inter_points_number_total.append(inter_counts)
+            convex_hull_number_total.append(hull_counts)
+
+        keep.append(
+            classify_state(inter_points_number_total,
+                           convex_hull_number_total,
+                           confidence_total) == 1)
+    return np.array(keep, dtype=bool)
 
 
-                # vi.add_points(inter_points_scale[:, :3], color='red', radius=10)
-                inter_points_number_val_scal.append(inter_points_scale.shape[0])
-                convex_hull_number_val_scal.append(convex_hull_count)
-
-            inter_points_number_total.append(inter_points_number_val_scal)
-            convex_hull_number_total.append(convex_hull_number_val_scal)
-
-        state = classify_state(inter_points_number_total, convex_hull_number_total, distance_total)
-        #
-        if state == 1:
-            # new_boxes.append(pseduo_labels[j])
-            new_boxes.append(True)
-        else:
-            new_boxes.append(False)
-
-
-    return new_boxes
-
-def pcd_to_np(pcd_file):
-    """
-    Read  pcd and return numpy array.
-
-    Parameters
-    ----------
-    pcd_file : str
-        The pcd file that contains the point cloud.
-
-    Returns
-    -------
-    pcd : o3d.PointCloud
-        PointCloud object, used for visualization
-    pcd_np : np.ndarray
-        The lidar data in numpy format, shape:(n, 4)
-
-    """
-    pcd = o3d.io.read_point_cloud(pcd_file)
-
-    xyz = np.asarray(pcd.points)
-    # we save the intensity in the first channel
-    intensity = np.expand_dims(np.asarray(pcd.colors)[:, 0], -1)
-    pcd_np = np.hstack((xyz, intensity))
-
-    return np.asarray(pcd_np, dtype=np.float32)
+def get_transform(box):
+    x, y, z, l, w, h, yaw = box[:7]
+    cos_yaw = math.cos(yaw)
+    sin_yaw = math.sin(yaw)
+    trans = np.eye(4, dtype=np.float32)
+    trans[0, 0] = cos_yaw
+    trans[0, 1] = -sin_yaw
+    trans[0, 3] = x
+    trans[1, 0] = sin_yaw
+    trans[1, 1] = cos_yaw
+    trans[1, 3] = y
+    trans[2, 3] = z
+    return np.linalg.inv(trans)
 
 
-def x_to_world(pose):
-    """
-    The transformation matrix from x-coordinate system to carla world system
+def score_box(points, box):
+    if points.shape[0] == 0:
+        return 0.0
 
-    Parameters
-    ----------
-    pose : list
-        [x, y, z, roll, yaw, pitch]
+    mask = in_hull(points[:, :3],
+                   boxes_to_corners_3d(box[:7].reshape(-1, 7)).reshape(-1, 3))
+    foreground = points[:, :3][mask]
+    if foreground.shape[0] == 0:
+        return 0.0
 
-    Returns
-    -------
-    matrix : np.ndarray
-        The transformation matrix.
-    """
-    x, y, z, roll, yaw, pitch = pose[:]
+    xy = foreground[:, :2]
+    if xy.shape[0] >= 3:
+        try:
+            xy = xy[ConvexHull(xy).vertices]
+        except scipy.spatial.qhull.QhullError:
+            pass
 
-    # used for rotation matrix
-    c_y = np.cos(np.radians(yaw))
-    s_y = np.sin(np.radians(yaw))
-    c_r = np.cos(np.radians(roll))
-    s_r = np.sin(np.radians(roll))
-    c_p = np.cos(np.radians(pitch))
-    s_p = np.sin(np.radians(pitch))
-
-    matrix = np.identity(4)
-    # translation matrix
-    matrix[0, 3] = x
-    matrix[1, 3] = y
-    matrix[2, 3] = z
-
-    # rotation matrix
-    matrix[0, 0] = c_p * c_y
-    matrix[0, 1] = c_y * s_p * s_r - s_y * c_r
-    matrix[0, 2] = -c_y * s_p * c_r - s_y * s_r
-    matrix[1, 0] = s_y * c_p
-    matrix[1, 1] = s_y * s_p * s_r + c_y * c_r
-    matrix[1, 2] = -s_y * s_p * c_r + c_y * s_r
-    matrix[2, 0] = s_p
-    matrix[2, 1] = -c_p * s_r
-    matrix[2, 2] = c_p * c_r
-
-    return matrix
+    points_h = np.hstack((xy, np.zeros((xy.shape[0], 1)),
+                          np.ones((xy.shape[0], 1))))
+    local = np.dot(points_h, get_transform(box).T)[:, :3]
+    scale = np.abs(local[:, :2]) / (box[3:5] * 0.5)
+    return float(np.max(scale, axis=1).mean())
 
 
-def multi_pt2world(points_path, poses):
-    points = []
-    for point_path, pose in zip(points_path, poses):
-        point = pcd_to_np(point_path)
-        point_homogeneous = np.hstack((point[:, :3], np.ones((point.shape[0], 1))))
-        pose_ = x_to_world(pose)
-        point_ = np.dot(pose_, point_homogeneous.T).T
-        point__ = remove_ground_points(point_)
-        points.append(point__)
-    return points
+def append_scores(local_boxes, world_boxes, dense_points):
+    if local_boxes.shape[0] == 0:
+        return np.empty((0, 8), dtype=np.float32)
+
+    scores = [score_box(dense_points, box) for box in world_boxes]
+    return np.hstack((local_boxes, np.array(scores).reshape(-1, 1)))
 
 
-def pc_2_world(points, poses):
-    point_homogeneous = np.hstack((points[:, :3], np.ones((points.shape[0], 1))))
-    pose_ = x_to_world(poses)
-    point_ = np.dot(pose_, point_homogeneous.T).T
-    # points.append(point_)
-    return point_
+def scenario_timestamps(scenario_folder, cav_list):
+    first_cav_path = os.path.join(scenario_folder, cav_list[0])
+    yaml_files = sorted([
+        x for x in os.listdir(first_cav_path)
+        if x.endswith('.yaml') and 'additional' not in x
+    ])
+    return [x.replace('.yaml', '') for x in yaml_files]
 
 
-def load_yaml(file, opt=None):
-    """
-    Load yaml file and return a dictionary.
-
-    Parameters
-    ----------
-    file : string
-        yaml file path.
-
-    opt : argparser
-         Argparser.
-    Returns
-    -------
-    param : dict
-        A dictionary that contains defined parameters.
-    """
-    if opt and opt.model_dir:
-        file = os.path.join(opt.model_dir, 'config.yaml')
-
-    stream = open(file, 'r')
-    loader = yaml.Loader
-    loader.add_implicit_resolver(
-        u'tag:yaml.org,2002:float',
-        re.compile(u'''^(?:
-         [-+]?(?:[0-9][0-9_]*)\\.[0-9_]*(?:[eE][-+]?[0-9]+)?
-        |[-+]?(?:[0-9][0-9_]*)(?:[eE][-+]?[0-9]+)
-        |\\.[0-9_]+(?:[eE][-+][0-9]+)?
-        |[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\\.[0-9_]*
-        |[-+]?\\.(?:inf|Inf|INF)
-        |\\.(?:nan|NaN|NAN))$''', re.X),
-        list(u'-+0123456789.'))
-    param = yaml.load(stream, Loader=loader)
-    if "yaml_parser" in param:
-        param = eval(param["yaml_parser"])(param)
-
-    return param
-
-def return_pl_frome_single_scenario(count,
-                                    node_timestamp_lsit,
-                                    dataset_dir,
-                                    pseudo_label_dir,
-                                    output_dir):
-  
-    path = dataset_dir
-    scenario_folders = sorted([os.path.join(path, x)  
-                               for x in os.listdir(path) if
-                               os.path.isdir(os.path.join(path, x))])
-    scenario_folder = scenario_folders[count]
-    cav_list = sorted([x for x in os.listdir(scenario_folders[count]) 
-                       if os.path.isdir(
-            os.path.join(scenario_folders[count], x))])
-    for cav_id in cav_list:
-        cav_path = os.path.join(scenario_folders[count], cav_id)
-        yaml_files = \
-            sorted([os.path.join(cav_path, x)  
-                    for x in os.listdir(cav_path) if
-                    x.endswith('.yaml') and 'additional' not in x])
-        break
-
-    timestamps = []
-    for file in yaml_files:
-        res = file.split(os.path.sep)[-1]
-        timestamps.append(res.replace('.yaml', ''))
-    
-    cur_timestamps = node_timestamp_lsit[count] 
-    node_timestamp= node_timestamp_lsit[count+1] 
-
+def load_scenario_points_and_poses(scenario_folder, cav_list, timestamps,
+                                   remove_ground):
     multi_agent_point = []
     poses = []
-    yaml_file_list = []
     for cav_id in cav_list:
-        # if count == 0:
-        #     continue
         cav_path = os.path.join(scenario_folder, cav_id)
-        single_agent_point = []
-        pose = []
-        yaml_file_name_list = []
+        cav_points = []
+        cav_poses = []
         for timestamp in timestamps:
-            pcd_file_name = timestamp + ".pcd"
-            point_path = os.path.join(cav_path, pcd_file_name)
-            points_local = pcd_to_np(point_path)
-    
-            yaml_file_name = timestamp + ".yaml"
-            yaml_path = os.path.join(cav_path, yaml_file_name)
-            lidar_pose = load_yaml(yaml_path)['lidar_pose']
-    
-    
-            points_gloabal = pc_2_world(points_local, lidar_pose)
-            points_gloabal_ = remove_ground_points(points_gloabal)
-            single_agent_point.append(points_gloabal_)
-            pose.append(lidar_pose)
-            yaml_file_name_list.append(yaml_path)
-    
-        poses.append(pose)
-        yaml_file_list.append(yaml_file_name_list)
-    
-        single_agent_points = np.concatenate(single_agent_point, axis=0)
-        multi_agent_point.append(single_agent_point)
-   
-
-    for num_timestamp in tqdm(range(cur_timestamps, node_timestamp)): #tqdm(range(node_timestamp-len(timestamps), node_timestamp))
-        
-
-            
-        pseduo_labels = np.load(os.path.join(pseudo_label_dir,
-                                             f'pre_{num_timestamp}.npy'))
-       
-        pseduo_labels_ = pseduo_labels.copy()
-
-       
-
-        box_center = pseduo_labels[:, :3].copy()
-        box_center_new = pc_2_world(box_center, poses[0][num_timestamp - cur_timestamps])
-        dif_ang = get_registration_angle(x_to_world(poses[0][num_timestamp - cur_timestamps]))
-        pseduo_labels[:, :3] = box_center_new[:, :3]
-        pseduo_labels[:, 6] = pseduo_labels[:, 6] + dif_ang
+            pcd_path = os.path.join(cav_path, timestamp + '.pcd')
+            yaml_path = os.path.join(cav_path, timestamp + '.yaml')
+            pose = load_yaml(yaml_path)['lidar_pose']
+            points_world = points_to_world(pcd_to_np(pcd_path), pose)
+            if remove_ground:
+                points_world = remove_ground_points(points_world)
+            cav_points.append(points_world)
+            cav_poses.append(pose)
+        multi_agent_point.append(cav_points)
+        poses.append(cav_poses)
+    return multi_agent_point, poses
 
 
-        ok = []
-        for m in range(len(cav_list)):
-            ok.append(np.array(poses[m][num_timestamp - cur_timestamps])[:3].reshape(1, 3))
+def process_frame(args, global_idx, frame_idx, num_frames, local_boxes,
+                  world_boxes, keep, multi_agent_point, cav_count):
+    noise = np.logical_not(keep)
+    filtered_local = local_boxes[keep]
+    noise_local = local_boxes[noise]
+    filtered_world = world_boxes[keep]
+    noise_world = world_boxes[noise]
 
-        now_timestamp = num_timestamp - cur_timestamps
-        out_pseduo_labels = box_filter(pseduo_labels, multi_agent_point, ok, now_timestamp)
+    start = max(0, frame_idx - args.window)
+    end = min(num_frames, frame_idx + args.window)
+    dense_points = []
+    for dense_frame in range(start, end):
+        for cav_idx in range(cav_count):
+            dense_points.append(multi_agent_point[cav_idx][dense_frame])
+    dense_points = np.concatenate(dense_points, axis=0) \
+        if dense_points else np.empty((0, 4))
 
-        inverted_list = [not x for x in out_pseduo_labels]
+    filtered_with_score = append_scores(
+        filtered_local, filtered_world, dense_points)
+    noise_with_score = append_scores(
+        noise_local, noise_world, dense_points)
 
-        np.save(os.path.join(output_dir,
-                             f'out_pseduo_labels_v1_{num_timestamp}.npy'),
-                pseduo_labels_[out_pseduo_labels])
-        np.save(os.path.join(output_dir,
-                             f'out_pseduo_labels_noise_v1_{num_timestamp}.npy'),
-                pseduo_labels_[inverted_list])
-    
-    return True
+    np.save(os.path.join(
+        args.out_dir, 'out_pseduo_labels_v1_%d.npy' % global_idx),
+        filtered_local)
+    np.save(os.path.join(
+        args.out_dir, 'out_pseduo_labels_noise_v1_%d.npy' % global_idx),
+        noise_local)
+    np.save(os.path.join(
+        args.out_dir, 'out_pseduo_labels_with_score_v4_%d.npy' % global_idx),
+        filtered_with_score)
+    np.save(os.path.join(
+        args.out_dir, 'out_pseduo_labels_noise_with_score_v4_%d.npy' % global_idx),
+        noise_with_score)
 
-import itertools
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Run MBE filtering and score generation for OPV2V.')
+    parser.add_argument('--data_dir', default='/root/autodl-tmp/opv2v/train',
+                        help='OPV2V train directory.')
+    parser.add_argument('--pred_dir',
+                        default='/root/autodl-tmp/out/pre_box_test_full',
+                        help='Directory containing pre_{idx}.npy.')
+    parser.add_argument('--out_dir', default='/root/autodl-tmp/out',
+                        help='Directory for filtered pseudo labels.')
+    parser.add_argument('--window', type=int, default=25,
+                        help='Temporal window radius for scoring.')
+    parser.add_argument('--max_scenarios', type=int, default=None,
+                        help='Debug option: process only first N scenarios.')
+    parser.add_argument('--keep_ground', action='store_true',
+                        help='Keep ground points instead of OPV2V ground removal.')
+    args = parser.parse_args()
+
+    os.makedirs(args.out_dir, exist_ok=True)
+    scenario_folders = sorted([
+        os.path.join(args.data_dir, x)
+        for x in os.listdir(args.data_dir)
+        if os.path.isdir(os.path.join(args.data_dir, x))
+    ])
+    if args.max_scenarios is not None:
+        scenario_folders = scenario_folders[:args.max_scenarios]
+
+    global_idx = 0
+    for scenario_folder in tqdm(scenario_folders, desc='scenarios'):
+        cav_list = sorted([
+            x for x in os.listdir(scenario_folder)
+            if os.path.isdir(os.path.join(scenario_folder, x))
+        ])
+        timestamps = scenario_timestamps(scenario_folder, cav_list)
+        multi_agent_point, poses = load_scenario_points_and_poses(
+            scenario_folder, cav_list, timestamps,
+            remove_ground=not args.keep_ground)
+
+        num_frames = len(timestamps)
+        for frame_idx in tqdm(range(num_frames), desc=os.path.basename(scenario_folder),
+                              leave=False):
+            pred_path = os.path.join(args.pred_dir, 'pre_%d.npy' % global_idx)
+            local_boxes = np.load(pred_path)
+            if local_boxes.shape[0] == 0:
+                keep = np.zeros((0,), dtype=bool)
+                world_boxes = local_boxes.copy()
+            else:
+                world_boxes = boxes_to_world(local_boxes, poses[0][frame_idx])
+                cav_positions = [
+                    pose_to_matrix(poses[cav_idx][frame_idx])[:3, 3]
+                    for cav_idx in range(len(cav_list))
+                ]
+                keep = box_filter(world_boxes, multi_agent_point,
+                                  cav_positions, frame_idx)
+
+            process_frame(args, global_idx, frame_idx, num_frames,
+                          local_boxes, world_boxes, keep, multi_agent_point,
+                          len(cav_list))
+            global_idx += 1
+
 
 if __name__ == '__main__':
-
-    opt = parse_args()
-    os.makedirs(opt.output_dir, exist_ok=True)
-
-    path = opt.dataset_dir
-
-    scenario_folders = sorted([os.path.join(path, x)  # 单个元素的例：.../OPV2V/train/2021_08_16_22_26_54，为一个场景
-                               for x in os.listdir(path) if
-                               os.path.isdir(os.path.join(path, x))])
-    count = 0
-    node_timestamp_lsit = []
-    for scenario_folder in tqdm(scenario_folders):
-        cav_list = sorted([x for x in os.listdir(scenario_folder)  # scenario_folder下每个文件夹都代表一辆车，如641，650，659；单个元素例：641
-                           if os.path.isdir(
-                os.path.join(scenario_folder, x))])
-        for cav_id in cav_list:
-            cav_path = os.path.join(scenario_folder, cav_id)
-            yaml_files = \
-                sorted([os.path.join(cav_path, x)  # 例：将...\OPV2V\train\2021_08_16_22_26_54\641下'000069.yaml'这样的文件路径升序排序
-                        for x in os.listdir(cav_path) if
-                        x.endswith('.yaml') and 'additional' not in x])
-            break
-        timestamps = []
-        for file in yaml_files:
-            res = file.split(os.path.sep)[-1]
-            timestamp = res.replace('.yaml', '')  # 如'000069.yaml'变成'000069'
-            timestamps.append(timestamp)
-        node_timestamp_lsit.append(len(timestamps))
-    
-
-    
-    node_timestamp_lsit = [0]+ node_timestamp_lsit
-    new_list = []
-    current_sum = 0
-
-    for num in range(len(node_timestamp_lsit)):
-        current_sum += node_timestamp_lsit[num]
-        new_list.append(current_sum) 
-
-    scenario_count = len(scenario_folders)
-    if opt.max_scenarios is not None:
-        scenario_count = min(scenario_count, opt.max_scenarios)
-    sample_sequence_file_list = [i for i in range(scenario_count)]
-
-
-    process_single_sequence = partial(
-        return_pl_frome_single_scenario,
-        node_timestamp_lsit=new_list,
-        dataset_dir=opt.dataset_dir,
-        pseudo_label_dir=opt.pseudo_label_dir,
-        output_dir=opt.output_dir,
-    )
-
-    with multiprocessing.Pool(opt.num_workers) as p:
-        sequence_infos = list(
-            tqdm(p.imap(process_single_sequence, sample_sequence_file_list), total=len(sample_sequence_file_list)))
-
+    main()
