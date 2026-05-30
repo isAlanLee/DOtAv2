@@ -104,6 +104,14 @@
   - 多尺度缩放只作用于 BEV 平面尺寸 `l,w`，不再缩放高度 `h`。
 - 本地轻量验证：`python -m py_compile opencood/tools/MBE.py` 通过。
 
+## 2026-05-30 19:16:22 +08:00
+
+- 审查当前训练与 MBE 是否符合论文：
+  - 初始 label-free 训练路径符合论文：`lable_free=True` 时使用内部共享的协作车辆信息作为监督。
+  - MBE 当前实现基本对齐论文 CPE/BAE/ICE：多尺度框、凸包边界、反距离平方权重与阈值 `phi_r=0.1`、`phi_o=0.7`。
+  - 仍存在一个训练侧论文一致性风险：`point_pillar_intermediate.py` 在 LICL 中只选取 `0.2 < noise_score < 0.8` 的低质量标签作为负样本，而论文描述是使用 MBE 判别出的低质量标签作为负提示；该固定区间属于实现启发式。
+  - 另一个工程差异：`MBE.py` 的 `score_box` 生成 `targets_score` 用于回归加权，这不是论文 MBE 判别公式本身，而是仓库训练实现的附加权重。
+
 ## 2026-05-30 15:07:29 +08:00
 
 - 本次重新阅读项目并核对当前进度。
@@ -250,3 +258,24 @@
   - `timm` 锁定为 `timm==0.4.12`，避开新版 `timm -> safetensors` 依赖链，且满足当前代码只使用 `timm.scheduler.cosine_lr.CosineLRScheduler` 的需求。
   - `cython` 锁定为 `cython==0.29.36`，降低旧版 CUDA/C++ 扩展在 Python 3.7 环境下被 Cython 3 影响的风险。
 - 服务器应重新同步该文件后执行依赖安装；若环境中已经装入不兼容新版 `timm/safetensors`，建议先卸载二者再重新安装。
+## 2026-05-30 19:14:49 +08:00
+
+- 用户请求审查当前 V2V4Real 训练与 MBE 是否符合论文实现。
+- 审查结论：
+  - label-free 初始训练当前较接近论文思想：使用协作智能体共享的 ego-pose + ego-shape 初始化检测器；V2V4Real 专用逻辑已改为从 `vehicles` 中筛选 CAV id 对应对象，并使用其 `location/angle/extent`，避免使用所有人工标注车辆。
+  - 仍需在实验记录中说明：V2V4Real 的 OPV2V-format `vehicles` 字段同时包含标注对象，当前实现通过 `object_id in cav_id_list` 只取协作车自身信息；这符合“共享协作体自身信息”的设定，但要避免误用非协作目标。
+  - 当前新增的 `mbe_v2v4real.py` 只能算工程近似版 MBE，不能声称严格等价论文实现；主要差异包括将原始 `MBE.py` 与 `box_score_for_mbe.py` 的两阶段流程合并、未完全复刻原脚本的去地面处理和所有阈值/判别细节、box score 计算为简化实现。
+  - 若要严格复现，应优先参数化和修复原始 `MBE.py`、`box_score_for_mbe.py` 主流程，而不是使用新写的简化脚本；同时保留 V2V4Real matrix pose 兼容。
+
+## 2026-05-30 19:21:08 +08:00
+
+- 用户要求直接修改 V2V4Real 的 MBE 流程。
+- 已将 V2V4Real MBE 改为两阶段专用流程，避免继续使用之前合并版近似脚本：
+  - `opencood/tools/mbe_v2v4real_utils.py`：公共工具，包含 V2V4Real matrix pose 兼容、点云转 world、box 转 world、去地面、MBE 多尺度判别、box score。
+  - `opencood/tools/v2v4real_mbe_filter.py`：第一阶段，只读取 `pre_{idx}.npy` 并输出 `out_pseduo_labels_v1_{idx}.npy` 与 `out_pseduo_labels_noise_v1_{idx}.npy`。
+  - `opencood/tools/v2v4real_box_score.py`：第二阶段，读取第一阶段输出并生成 `out_pseduo_labels_with_score_v4_{idx}.npy` 与 `out_pseduo_labels_noise_with_score_v4_{idx}.npy`。
+  - 原 `opencood/tools/mbe_v2v4real.py` 改为兼容提示 wrapper，避免误用合并版近似结果。
+- 已本地检查：
+  - `python -m py_compile` 通过。
+  - 新 V2V4Real 脚本中未检出 `viewer`、Windows 路径、`/mnt/32THHD`、`C:\Users` 等硬编码残留。
+- 注意：该流程比合并版更贴近原始两阶段结构，但仍是 V2V4Real 专用适配；后续服务器需要先用 `--max_scenarios 1` 做小样本 smoke test，再全量跑 7105 帧。
