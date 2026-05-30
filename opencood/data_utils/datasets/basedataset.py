@@ -18,7 +18,7 @@ import opencood.utils.pcd_utils as pcd_utils
 from opencood.data_utils.augmentor.data_augmentor import DataAugmentor
 from opencood.hypes_yaml.yaml_utils import load_yaml
 from opencood.utils.pcd_utils import downsample_lidar_minimum
-from opencood.utils.transformation_utils import x1_to_x2
+from opencood.utils.transformation_utils import x1_to_x2, dist_two_pose
 
 
 class BaseDataset(Dataset):
@@ -333,10 +333,7 @@ class BaseDataset(Dataset):
         for cav_id, cav_content in scenario_database.items():
             cur_lidar_pose = \
                 load_yaml(cav_content[timestamp_key]['yaml'])['lidar_pose']
-            distance = \
-                math.sqrt((cur_lidar_pose[0] -
-                           ego_lidar_pose[0]) ** 2 +
-                          (cur_lidar_pose[1] - ego_lidar_pose[1]) ** 2)
+            distance = dist_two_pose(cur_lidar_pose, ego_lidar_pose)
             cav_content['distance_to_ego'] = distance
             scenario_database.update({cav_id: cav_content})
 

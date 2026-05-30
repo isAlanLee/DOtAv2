@@ -98,3 +98,34 @@
 - 三份配置均使用 `root_dir=/root/autodl-tmp/v2v4real/Data/train` 和 `pseudo_lable_path=/root/autodl-tmp/out_v2v4real`。
 - label-free 配置的 `validate_dir` 设置为 `/root/autodl-tmp/v2v4real/Data/train`，用于后续在训练集上生成伪标签；普通训练和 DOtA 迭代训练配置的 `validate_dir` 设置为 `/root/autodl-tmp/v2v4real/Data/val`。
 - 已本地轻量加载验证三份 YAML：`yaml_utils.load_yaml` 可正常解析，派生参数为 `anchor_args.W=704`、`H=200`、`grid_size=[704, 200, 1]`。
+
+## 2026-05-30 15:36:26 +08:00
+
+- 用户请求 V2V4Real 复现第一步命令。
+- 第一阶段建议先训练 label-free 初始检测器，使用 `opencood/hypes_yaml/point_pillar_intermediate_fusion_lable_free_v2v4real.yaml`。
+- 命令需在服务器项目根目录执行，并将终端输出保存到项目根目录 `log/` 下，例如 `log/train_label_free_v2v4real_YYYYMMDD_HHMMSS.log`。
+
+## 2026-05-30 15:41:03 +08:00
+
+- 用户在服务器运行 V2V4Real label-free 训练时报错：`TypeError: only size-1 arrays can be converted to Python scalars`，位置在 `BaseDataset.calc_dist_to_ego` 计算 `lidar_pose` 距离时。
+- 判断原因：V2V4Real 的 OPV2V format 中 `lidar_pose` 可能是 4x4 矩阵，而当前 DOtA/OpenCOOD 代码假设 `lidar_pose` 是 OPV2V 的 6DoF list。
+- 按用户要求未修改 `train.py`；已做最小兼容改动：
+  - `opencood/utils/transformation_utils.py`：让 `x1_to_x2` 同时支持 6DoF list 和矩阵 pose，并新增 `dist_two_pose`。
+  - `opencood/data_utils/datasets/basedataset.py`：`calc_dist_to_ego` 改用 `dist_two_pose`。
+  - `opencood/data_utils/datasets/intermediate_fusion_dataset.py`：通信距离过滤改用 `dist_two_pose`。
+- 本地轻量测试通过：list/list pose 与 matrix/matrix pose 均可计算距离，`x1_to_x2` 返回 4x4 矩阵。
+
+## 2026-05-30 15:41:49 +08:00
+
+- 用户询问当前 V2V4Real 兼容修改是否会影响 OPV2V 整个流程。
+- 评估结论：对 OPV2V 未来重新启动的训练/推理流程应保持兼容；OPV2V 的 `lidar_pose` 是 6DoF list 时，`x1_to_x2` 仍走原有 list/list 分支，距离计算 `dist_two_pose` 的 list 分支也等价于原始公式。
+- 正在服务器中运行的 OPV2V 进程通常不会受磁盘代码修改影响，因为 Python 已加载的模块不会自动热更新；除非重启该训练进程才会加载新代码。
+- `requirements.txt` 中锁定 `cython==0.29.36`、`timm==0.4.12` 只影响后续新环境安装，不影响当前已运行训练。
+
+## 2026-05-30 15:34:42 +08:00
+
+- 用户服务器执行 `python setup.py develop` 时再次失败：`requirements.txt` 中未锁定的 `timm` 被解析到新版，新版继续拉取 `safetensors`，而 Python 3.7 环境下拿到的 `safetensors-0.8.0rc0.tar.gz` 没有传统 `setup.py`，导致 easy_install 报错。
+- 已修改 `requirements.txt`：
+  - `timm` 锁定为 `timm==0.4.12`，避开新版 `timm -> safetensors` 依赖链，且满足当前代码只使用 `timm.scheduler.cosine_lr.CosineLRScheduler` 的需求。
+  - `cython` 锁定为 `cython==0.29.36`，降低旧版 CUDA/C++ 扩展在 Python 3.7 环境下被 Cython 3 影响的风险。
+- 服务器应重新同步该文件后执行依赖安装；若环境中已经装入不兼容新版 `timm/safetensors`，建议先卸载二者再重新安装。

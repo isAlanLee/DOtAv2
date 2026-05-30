@@ -21,7 +21,7 @@ from opencood.data_utils.pre_processor import build_preprocessor
 from opencood.utils.pcd_utils import \
     mask_points_by_range, mask_ego_points, shuffle_points, \
     downsample_lidar_minimum
-from opencood.utils.transformation_utils import x1_to_x2
+from opencood.utils.transformation_utils import x1_to_x2, dist_two_pose
 
 
 class IntermediateFusionDataset(basedataset.BaseDataset):
@@ -114,12 +114,8 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
 
         for cav_id, selected_cav_base in base_data_dict.items():
             # check if the cav is within the communication range with ego
-            distance = \
-                math.sqrt((selected_cav_base['params']['lidar_pose'][0] -
-                           ego_lidar_pose[0]) ** 2 + (
-                                  selected_cav_base['params'][
-                                      'lidar_pose'][1] - ego_lidar_pose[
-                                      1]) ** 2)
+            distance = dist_two_pose(selected_cav_base['params']['lidar_pose'],
+                                     ego_lidar_pose)
             if distance > opencood.data_utils.datasets.COM_RANGE:
                 continue
 

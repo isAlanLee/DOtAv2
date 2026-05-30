@@ -9,9 +9,9 @@ scikit-image
 tqdm
 PyYAML
 open3d
-cython
+cython==0.29.36
 tensorboardX
 shapely==2.0.0
 einops
 cumm
-timm
+timm==0.4.12
