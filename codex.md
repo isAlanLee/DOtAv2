@@ -75,6 +75,17 @@
 - 判断：该 AP 是 `inference.py` 顺带对当前 checkpoint 做评估，不等同于伪标签是否生成成功；需要先统计 `/root/autodl-tmp/out/pre_box_test_full` 中非空预测框数量和分数分布。
 - 下一步建议：若伪标签全空或极少，优先降低 checkpoint `config.yaml` 中 `postprocess.target_args.score_threshold` 后重跑伪标签生成；若非空，则进入 MBE 过滤阶段。
 
+## 2026-05-30 19:03:52 +08:00
+
+- 用户服务器重新生成伪标签后，日志显示 `6765it`，AP@0.3/0.5/0.7 为 0.13。
+- 进入下一阶段：MBE 初筛伪标签。
+- 已修改 `opencood/tools/MBE.py`：
+  - 新增 `--dataset_dir`、`--pseudo_label_dir`、`--output_dir`、`--num_workers`、`--max_scenarios` 参数。
+  - 默认路径对齐服务器：数据 `/root/autodl-tmp/opv2v/train`，初始伪标签 `/root/autodl-tmp/out/pre_box_test_full`，输出 `/root/autodl-tmp/out`。
+  - 修复函数内未定义的 `scenario_folder` 和 `timestamps`。
+  - 对点数不足导致的 `ConvexHull` 异常做容错。
+- 本地轻量验证：`python -m py_compile opencood/tools/MBE.py` 通过。
+
 ## 2026-05-30 15:07:29 +08:00
 
 - 本次重新阅读项目并核对当前进度。

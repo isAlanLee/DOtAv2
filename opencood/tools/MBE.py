@@ -1,3 +1,4 @@
+import argparse
 import time
 import os
 import open3d as o3d
@@ -13,6 +14,24 @@ from functools import partial
 import multiprocessing
 import math
 from scipy.spatial import ConvexHull
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='MBE pseudo-label filtering')
+    parser.add_argument('--dataset_dir', type=str,
+                        default='/root/autodl-tmp/opv2v/train',
+                        help='OPV2V train split directory')
+    parser.add_argument('--pseudo_label_dir', type=str,
+                        default='/root/autodl-tmp/out/pre_box_test_full',
+                        help='directory containing pre_{idx}.npy pseudo labels')
+    parser.add_argument('--output_dir', type=str,
+                        default='/root/autodl-tmp/out',
+                        help='directory to save filtered pseudo labels')
+    parser.add_argument('--num_workers', type=int, default=16,
+                        help='number of multiprocessing workers')
+    parser.add_argument('--max_scenarios', type=int, default=None,
+                        help='debug option: process only first N scenarios')
+    return parser.parse_args()
 
 
 def in_hull(p, hull):
@@ -91,6 +110,9 @@ import random
 
 
 def remove_ground_points(point_cloud, max_iterations=100, distance_threshold=0.2):
+    if len(point_cloud) < 3:
+        return point_cloud
+
     ground_points = []
     non_ground_points = []
 
@@ -185,12 +207,16 @@ def box_filter(pseduo_labels, multi_agent_point, ok, now_timestamp):
                 inter_mask_scale = in_hull(multi_agent_point[car_num][now_timestamp][:, :3],
                                  boxes_to_corners_3d(scale_box.reshape(-1, 7)).reshape(-1, 3))
                 inter_points_scale = multi_agent_point[car_num][now_timestamp][:, :3][inter_mask_scale]
-                convex_hull_scale = inter_points_scale[ConvexHull(inter_points_scale).vertices]
+                try:
+                    convex_hull_scale = inter_points_scale[ConvexHull(inter_points_scale).vertices]
+                    convex_hull_count = convex_hull_scale.shape[0]
+                except Exception:
+                    convex_hull_count = 0
 
 
                 # vi.add_points(inter_points_scale[:, :3], color='red', radius=10)
                 inter_points_number_val_scal.append(inter_points_scale.shape[0])
-                convex_hull_number_val_scal.append(convex_hull_scale.shape[0])
+                convex_hull_number_val_scal.append(convex_hull_count)
 
             inter_points_number_total.append(inter_points_number_val_scal)
             convex_hull_number_total.append(convex_hull_number_val_scal)
@@ -334,12 +360,17 @@ def load_yaml(file, opt=None):
 
     return param
 
-def return_pl_frome_single_scenario(count, node_timestamp_lsit):
+def return_pl_frome_single_scenario(count,
+                                    node_timestamp_lsit,
+                                    dataset_dir,
+                                    pseudo_label_dir,
+                                    output_dir):
   
-    path = '/mnt/32THHD/xhe/datasets/OPV2V/train'
+    path = dataset_dir
     scenario_folders = sorted([os.path.join(path, x)  
                                for x in os.listdir(path) if
                                os.path.isdir(os.path.join(path, x))])
+    scenario_folder = scenario_folders[count]
     cav_list = sorted([x for x in os.listdir(scenario_folders[count]) 
                        if os.path.isdir(
             os.path.join(scenario_folders[count], x))])
@@ -351,7 +382,10 @@ def return_pl_frome_single_scenario(count, node_timestamp_lsit):
                     x.endswith('.yaml') and 'additional' not in x])
         break
 
-    
+    timestamps = []
+    for file in yaml_files:
+        res = file.split(os.path.sep)[-1]
+        timestamps.append(res.replace('.yaml', ''))
     
     cur_timestamps = node_timestamp_lsit[count] 
     node_timestamp= node_timestamp_lsit[count+1] 
@@ -393,7 +427,8 @@ def return_pl_frome_single_scenario(count, node_timestamp_lsit):
         
 
             
-        pseduo_labels = np.load(f'/mnt/32THHD/lwk/codes/OpenCOOD/pseduo_label_moma_1/pre_{num_timestamp}.npy')
+        pseduo_labels = np.load(os.path.join(pseudo_label_dir,
+                                             f'pre_{num_timestamp}.npy'))
        
         pseduo_labels_ = pseduo_labels.copy()
 
@@ -415,9 +450,11 @@ def return_pl_frome_single_scenario(count, node_timestamp_lsit):
 
         inverted_list = [not x for x in out_pseduo_labels]
 
-        np.save(f'/mnt/32THHD/lwk/datas/OPV2V/out_xqm_moma_1_plus_ONLY_DENSITY/out_pseduo_labels_v1_{num_timestamp}.npy',
+        np.save(os.path.join(output_dir,
+                             f'out_pseduo_labels_v1_{num_timestamp}.npy'),
                 pseduo_labels_[out_pseduo_labels])
-        np.save(f'/mnt/32THHD/lwk/datas/OPV2V/out_xqm_moma_1_plus_ONLY_DENSITY/out_pseduo_labels_noise_v1_{num_timestamp}.npy',
+        np.save(os.path.join(output_dir,
+                             f'out_pseduo_labels_noise_v1_{num_timestamp}.npy'),
                 pseduo_labels_[inverted_list])
     
     return True
@@ -426,8 +463,10 @@ import itertools
 
 if __name__ == '__main__':
 
+    opt = parse_args()
+    os.makedirs(opt.output_dir, exist_ok=True)
 
-    path = "/mnt/32THHD/xhe/datasets/OPV2V/train"
+    path = opt.dataset_dir
 
     scenario_folders = sorted([os.path.join(path, x)  # 单个元素的例：.../OPV2V/train/2021_08_16_22_26_54，为一个场景
                                for x in os.listdir(path) if
@@ -462,15 +501,21 @@ if __name__ == '__main__':
         current_sum += node_timestamp_lsit[num]
         new_list.append(current_sum) 
 
-    sample_sequence_file_list = [i for i in range(43)]
+    scenario_count = len(scenario_folders)
+    if opt.max_scenarios is not None:
+        scenario_count = min(scenario_count, opt.max_scenarios)
+    sample_sequence_file_list = [i for i in range(scenario_count)]
 
 
     process_single_sequence = partial(
         return_pl_frome_single_scenario,
         node_timestamp_lsit=new_list,
+        dataset_dir=opt.dataset_dir,
+        pseudo_label_dir=opt.pseudo_label_dir,
+        output_dir=opt.output_dir,
     )
 
-    with multiprocessing.Pool(16) as p:
+    with multiprocessing.Pool(opt.num_workers) as p:
         sequence_infos = list(
             tqdm(p.imap(process_single_sequence, sample_sequence_file_list), total=len(sample_sequence_file_list)))
 
