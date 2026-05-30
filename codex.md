@@ -62,6 +62,13 @@
 - 用户要求服务器运行训练命令时同时生成终端日志文件。
 - 约定：训练终端输出保存到项目根目录 `log/` 文件夹；模型 checkpoint 和 TensorBoard 仍由原代码保存到 `opencood/logs/`。
 
+## 2026-05-30 18:43:20 +08:00
+
+- 用户服务器完成第一步 label-free 初始检测器训练，checkpoint 路径为 `/root/autodl-tmp/DOtAv2/opencood/tools/../logs/point_pillar_intermediate_fusion_2026_05_30_14_47_35`。
+- 准备第二步：用该 checkpoint 生成训练集初始伪标签。
+- 已修改 `opencood/tools/inference.py`：新增 `--pseudo_lable_dir` 参数，默认 `/root/autodl-tmp/out`；伪标签 box 保存到 `pre_box_test_full/`，分数保存到 `pre_score_test_full/`。
+- 本地轻量验证：`python -m py_compile opencood/tools/inference.py` 通过。
+
 ## 2026-05-30 15:07:29 +08:00
 
 - 本次重新阅读项目并核对当前进度。

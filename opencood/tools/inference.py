@@ -27,6 +27,9 @@ def test_parser():
                         help='Continued training path')
     parser.add_argument('--pseudo_lable_save', type=int, default=1,
                         help='pseudo_lable_save')
+    parser.add_argument('--pseudo_lable_dir', type=str,
+                        default='/root/autodl-tmp/out',
+                        help='directory to save generated pseudo labels')
     parser.add_argument('--eval_epoch', type=int, default=None,
                         help='Set the checkpoint')
     parser.add_argument('--fusion_method', required=True, type=str,
@@ -90,8 +93,12 @@ def main():
                    0.7: {'tp': [], 'fp': [], 'gt': 0, 'score': []}}
 
     if opt.pseudo_lable_save == 0:
-        os.makedirs('pseduo_label_val/pre_box_test_full', exist_ok=True)
-        os.makedirs('pseduo_label_val/pre_score_test_full', exist_ok=True)
+        pseudo_box_dir = os.path.join(opt.pseudo_lable_dir,
+                                      'pre_box_test_full')
+        pseudo_score_dir = os.path.join(opt.pseudo_lable_dir,
+                                        'pre_score_test_full')
+        os.makedirs(pseudo_box_dir, exist_ok=True)
+        os.makedirs(pseudo_score_dir, exist_ok=True)
 
     if opt.show_sequence:
         vis = o3d.visualization.Visualizer()
@@ -143,8 +150,8 @@ def main():
                     pred_score_1 = pred_score.cpu().numpy()
                 # gt_box_7 = box_utils.corner_to_center(gt_box_tensor.cpu().numpy())
                 # np.save(f'pseduo_label_val/gt_box_test_full/gt_{i}.npy', gt_box_7)
-                np.save(f'pseduo_label_val/pre_box_test_full/pre_{i}.npy', pred_box_7)
-                np.save(f'pseduo_label_val/pre_score_test_full/score_{i}.npy', pred_score_1)
+                np.save(os.path.join(pseudo_box_dir, f'pre_{i}.npy'), pred_box_7)
+                np.save(os.path.join(pseudo_score_dir, f'score_{i}.npy'), pred_score_1)
                 # np.save(f'pseduo_label_val/points/origin_lidar_{i}.npy', batch_data['ego']['origin_lidar'].cpu().numpy())
           
 
