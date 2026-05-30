@@ -160,6 +160,28 @@
   - 固定尺寸 `label_free_use_self_pose` fallback 保留在代码中但 V2V4Real YAML 默认不启用。
 - 本地 `py_compile` 和 YAML 开关解析通过：`label_free_use_cav_boxes=True`。
 
+## 2026-05-30 18:28:14 +08:00
+
+- 用户服务器 V2V4Real label-free 初始检测器训练完成：epoch 14 最后日志 `Loss=0.0783`、`Conf Loss=0.0488`、`Loc Loss=0.0295`。
+- checkpoint 保存目录：`/root/autodl-tmp/DOtAv2/opencood/logs/point_pillar_intermediate_fusion_lable_free_v2v4real_2026_05_30_16_01_07`。
+- 下一步应使用该 checkpoint 运行 `opencood/tools/inference.py --fusion_method intermediate --pseudo_lable_save 0` 生成训练集初始伪标签；由于 label-free checkpoint 的 `config.yaml` 中 `validate_dir` 指向 `/root/autodl-tmp/v2v4real/Data/train`，该步骤会遍历训练集。
+
+## 2026-05-30 18:38:23 +08:00
+
+- 用户已运行 V2V4Real 初始伪标签生成命令，`inference.py` 找到 7105 samples，加载 epoch 15 checkpoint，7105 iter 正常完成。
+- 终端输出 AP@0.3/0.5/0.7 均为 0.00。该值不一定阻断伪标签流程，因为当前步骤主要目标是保存 `pseduo_label_val/pre_box_test_full/pre_*.npy` 和 `pseduo_label_val/pre_score_test_full/score_*.npy`；AP 可能受 label-free 初始检测器质量、V2V4Real GT 坐标/评估适配、或预测为空影响。
+- 下一步需先检查伪标签文件数量和非空比例，再决定是否进入 MBE。
+
+## 2026-05-30 18:39:52 +08:00
+
+- 用户检查伪标签输出后发现 `box files=0`、`score files=0`。
+- 定位原因：`opencood/tools/inference.py` 中 `--pseudo_lable_save` 未声明 `type=int`，命令行传入 `0` 会成为字符串 `"0"`，而保存分支判断为 `opt.pseudo_lable_save == 0`，导致分支不执行。
+- 已修复 `inference.py`：
+  - `parser.add_argument('--pseudo_lable_save', type=int, default=1, ...)`。
+  - 当 `pseudo_lable_save == 0` 时自动创建 `pseduo_label_val/pre_box_test_full` 和 `pseduo_label_val/pre_score_test_full`。
+  - 若某帧 `pred_box_tensor is None`，保存空数组，避免保存分支报错并保持帧索引连续。
+- 已本地 `python -m py_compile opencood/tools/inference.py` 通过。
+
 ## 2026-05-30 15:34:42 +08:00
 
 - 用户服务器执行 `python setup.py develop` 时再次失败：`requirements.txt` 中未锁定的 `timm` 被解析到新版，新版继续拉取 `safetensors`，而 Python 3.7 环境下拿到的 `safetensors-0.8.0rc0.tar.gz` 没有传统 `setup.py`，导致 easy_install 报错。

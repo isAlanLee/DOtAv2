@@ -25,7 +25,7 @@ def test_parser():
     parser = argparse.ArgumentParser(description="synthetic data generation")
     parser.add_argument('--model_dir', type=str, required=True,
                         help='Continued training path')
-    parser.add_argument('--pseudo_lable_save', default=1, 
+    parser.add_argument('--pseudo_lable_save', type=int, default=1,
                         help='pseudo_lable_save')
     parser.add_argument('--eval_epoch', type=int, default=None,
                         help='Set the checkpoint')
@@ -89,6 +89,10 @@ def main():
                    0.5: {'tp': [], 'fp': [], 'gt': 0, 'score': []},                
                    0.7: {'tp': [], 'fp': [], 'gt': 0, 'score': []}}
 
+    if opt.pseudo_lable_save == 0:
+        os.makedirs('pseduo_label_val/pre_box_test_full', exist_ok=True)
+        os.makedirs('pseduo_label_val/pre_score_test_full', exist_ok=True)
+
     if opt.show_sequence:
         vis = o3d.visualization.Visualizer()
         vis.create_window()
@@ -131,9 +135,13 @@ def main():
 
             # print('###########', pred_box_tensor)
             if opt.pseudo_lable_save == 0:
-                pred_box_7 = box_utils.corner_to_center(pred_box_tensor.cpu().numpy())
+                if pred_box_tensor is None:
+                    pred_box_7 = np.empty((0, 7))
+                    pred_score_1 = np.empty((0,))
+                else:
+                    pred_box_7 = box_utils.corner_to_center(pred_box_tensor.cpu().numpy())
+                    pred_score_1 = pred_score.cpu().numpy()
                 # gt_box_7 = box_utils.corner_to_center(gt_box_tensor.cpu().numpy())
-                pred_score_1 = pred_score.cpu().numpy()
                 # np.save(f'pseduo_label_val/gt_box_test_full/gt_{i}.npy', gt_box_7)
                 np.save(f'pseduo_label_val/pre_box_test_full/pre_{i}.npy', pred_box_7)
                 np.save(f'pseduo_label_val/pre_score_test_full/score_{i}.npy', pred_score_1)
