@@ -122,6 +122,44 @@
 - 正在服务器中运行的 OPV2V 进程通常不会受磁盘代码修改影响，因为 Python 已加载的模块不会自动热更新；除非重启该训练进程才会加载新代码。
 - `requirements.txt` 中锁定 `cython==0.29.36`、`timm==0.4.12` 只影响后续新环境安装，不影响当前已运行训练。
 
+## 2026-05-30 15:45:11 +08:00
+
+- 用户重新运行 V2V4Real label-free 训练后已能进入训练循环，但日志显示 `Loc Loss: 0.0000`，例如 epoch 0 的前 80 多个 batch 均为 0。
+- 初步判断：这不是 PyTorch scheduler warning 导致；`PointPillarLoss` 中回归损失只在 `pos_equal_one > 0` 的正样本 anchor 上计算，持续为 0 通常说明当前 label-free 目标没有生成正样本。
+- 当前 label-free 目标来自 `project_world_objects_lable_free`，其逻辑只保留 `object_id` 与当前 CAV id 匹配的框；V2V4Real 的车辆标注 id 可能与 CAV 文件夹 id 不一致，需在服务器用数据诊断命令确认每个 batch 的 `object_bbx_mask` 和 `pos_equal_one` 数量。
+
+## 2026-05-30 15:48:38 +08:00
+
+- 用户在服务器执行诊断：V2V4Real label-free 数据集长度为 7105，但 idx 0、1、2、10、50、100 均显示 `object_num=0`、`pos_anchor_num=0`。
+- 已确认 `Loc Loss=0` 的直接原因是 label-free 阶段没有生成任何目标框。
+- 已添加 V2V4Real 专用 fallback，不修改 `train.py`：
+  - `point_pillar_intermediate_fusion_lable_free_v2v4real.yaml` 新增 `label_free_use_self_pose: True`。
+  - `IntermediateFusionDataset.get_item_single_car` 在原始 label-free id 匹配无框且该 CAV 非 ego 时，调用 `generate_self_pose_label`。
+  - `generate_self_pose_label` 使用通信车辆自身 `transformation_matrix` 在 ego 坐标下生成一个固定尺寸车辆框，尺寸来自 anchor 配置 `h=1.56,w=1.6,l=3.9`，z 中心使用 `-1.0`。
+- 该 fallback 由 V2V4Real YAML 显式开关控制；OPV2V 配置未开启，应不进入该逻辑。
+- 已本地语法检查和 YAML 解析：`python -m py_compile` 通过，`label_free_use_self_pose=True` 可正确加载。
+
+## 2026-05-30 15:49:40 +08:00
+
+- 用户询问 V2V4Real label-free fallback 是否符合原始论文设置。
+- 结论：思想上接近论文的 preliminary label generation，即使用协作智能体内部共享的 ego-pose/ego-shape 初始化检测器；但当前 fallback 使用固定 anchor 尺寸和固定 z 中心，属于工程近似，不是严格论文复现。
+- 更忠实的做法是从 V2V4Real 元数据中读取协作车自身的真实 ego-shape/尺寸；若元数据没有显式尺寸，则至少应使用论文/数据集统一车辆尺寸配置并在实验记录中说明。
+
+## 2026-05-30 15:51:53 +08:00
+
+- 用户尝试用 `yaml.safe_load` 查看 V2V4Real 样本 YAML，失败：`could not determine a constructor for tag:yaml.org,2002:python/object/apply:numpy.core.multiarray._reconstruct`。
+- 原因：V2V4Real YAML 中包含 numpy 对象序列化，不能用 `safe_load`；应使用项目 `opencood.hypes_yaml.yaml_utils.load_yaml` 或 PyYAML 的普通 Loader 读取。
+
+## 2026-05-30 15:54:32 +08:00
+
+- 用户使用项目 `load_yaml` 成功读取 V2V4Real 样本：顶层字段含 `ego_speed`、`gps`、`lidar_pose`、`true_ego_pos`、`vehicles`。
+- 样本 `lidar_pose`/`true_ego_pos` 为 4x4 numpy 矩阵；`vehicles` 中 CAV id `1` 包含 `location`、`angle`、`center`、`extent`、`obj_type=Car`，其中 `extent=[1.9899,1.0311,0.8490]` 可作为真实 ego-shape/半尺寸。
+- 因此此前固定 anchor 尺寸 fallback 不够贴近论文；已调整为 V2V4Real 专用 `label_free_use_cav_boxes: True`：
+  - 从当前 CAV 视角的 `vehicles` 中筛选 object id 属于协作 CAV id 的车辆。
+  - 使用该对象 YAML 中的 `location/angle/extent` 生成框，再通过当前 CAV 到 ego 的 `transformation_matrix` 投影到 ego 坐标。
+  - 固定尺寸 `label_free_use_self_pose` fallback 保留在代码中但 V2V4Real YAML 默认不启用。
+- 本地 `py_compile` 和 YAML 开关解析通过：`label_free_use_cav_boxes=True`。
+
 ## 2026-05-30 15:34:42 +08:00
 
 - 用户服务器执行 `python setup.py develop` 时再次失败：`requirements.txt` 中未锁定的 `timm` 被解析到新版，新版继续拉取 `safetensors`，而 Python 3.7 环境下拿到的 `safetensors-0.8.0rc0.tar.gz` 没有传统 `setup.py`，导致 easy_install 报错。

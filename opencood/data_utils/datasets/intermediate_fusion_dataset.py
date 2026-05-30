@@ -21,7 +21,7 @@ from opencood.data_utils.pre_processor import build_preprocessor
 from opencood.utils.pcd_utils import \
     mask_points_by_range, mask_ego_points, shuffle_points, \
     downsample_lidar_minimum
-from opencood.utils.transformation_utils import x1_to_x2, dist_two_pose
+from opencood.utils.transformation_utils import x1_to_x2, x_to_world, dist_two_pose
 
 
 class IntermediateFusionDataset(basedataset.BaseDataset):
@@ -283,10 +283,20 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
 
         # retrieve objects under ego coordinates
         if self.label_free_training:
-            object_bbx_center, object_bbx_mask, object_ids = \
-                self.post_processor.generate_object_center_lable_free([selected_cav_base],
-                                                           ego_pose,
-                                                           all_selected_cav_id)
+            if self.params.get('label_free_use_cav_boxes', False):
+                object_bbx_center, object_bbx_mask, object_ids = \
+                    self.generate_cav_box_labels(selected_cav_base,
+                                                 all_selected_cav_id)
+            else:
+                object_bbx_center, object_bbx_mask, object_ids = \
+                    self.post_processor.generate_object_center_lable_free([selected_cav_base],
+                                                               ego_pose,
+                                                               all_selected_cav_id)
+            if self.params.get('label_free_use_self_pose', False) and \
+                    object_bbx_mask.sum() == 0 and \
+                    not selected_cav_base['ego']:
+                object_bbx_center, object_bbx_mask, object_ids = \
+                    self.generate_self_pose_label(selected_cav_base, cav_id)
         else:
             object_bbx_center, object_bbx_mask, object_ids = \
             self.post_processor.generate_object_center([selected_cav_base],
@@ -322,6 +332,92 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
              'velocity': velocity})
 
         return selected_cav_processed
+
+    def generate_cav_box_labels(self, selected_cav_base, all_selected_cav_id):
+        """
+        Generate label-free boxes for collaborative agents from their shared
+        pose and shape in V2V4Real metadata.
+        """
+        object_np = np.zeros((self.params['postprocess']['max_num'], 7))
+        mask = np.zeros(self.params['postprocess']['max_num'])
+        object_ids = []
+
+        transformation_matrix = selected_cav_base['params']['transformation_matrix']
+        anchor_args = self.params['postprocess']['anchor_args']
+        lidar_range = anchor_args['cav_lidar_range']
+        order = self.params['postprocess']['order']
+
+        for object_id, object_content in selected_cav_base['params']['vehicles'].items():
+            if str(object_id) not in all_selected_cav_id:
+                continue
+
+            location = object_content['location']
+            center = object_content['center']
+            rotation = object_content['angle']
+            extent = object_content['extent']
+            object_pose = [location[0] + center[0],
+                           location[1] + center[1],
+                           location[2] + center[2],
+                           rotation[0], rotation[1], rotation[2]]
+            object_to_cav = x_to_world(object_pose)
+            object_to_ego = np.dot(transformation_matrix, object_to_cav)
+
+            bbx = box_utils.create_bbx(extent).T
+            bbx = np.r_[bbx, [np.ones(bbx.shape[1])]]
+            bbx_ego = np.dot(object_to_ego, bbx).T
+            bbx_ego = np.expand_dims(bbx_ego[:, :3], 0)
+            bbx_ego = box_utils.corner_to_center(bbx_ego, order=order)
+            bbx_ego = box_utils.mask_boxes_outside_range_numpy(
+                bbx_ego, lidar_range, order)
+
+            if bbx_ego.shape[0] == 0:
+                continue
+            if len(object_ids) >= self.params['postprocess']['max_num']:
+                break
+
+            object_np[len(object_ids)] = bbx_ego[0]
+            mask[len(object_ids)] = 1
+            object_ids.append(object_id)
+
+        return object_np, mask, object_ids
+
+    def generate_self_pose_label(self, selected_cav_base, cav_id):
+        """
+        Generate a label-free box from a communicating agent's own pose.
+
+        V2V4Real OPV2V-format annotations do not always use object ids that
+        match CAV folder ids, so the original id-matching label-free path can
+        produce no boxes. This fallback is enabled only by config.
+        """
+        object_np = np.zeros((self.params['postprocess']['max_num'], 7))
+        mask = np.zeros(self.params['postprocess']['max_num'])
+
+        transformation_matrix = selected_cav_base['params']['transformation_matrix']
+        center = np.dot(transformation_matrix, np.array([0., 0., 0., 1.]))[:3]
+        yaw = math.atan2(transformation_matrix[1, 0],
+                         transformation_matrix[0, 0])
+
+        anchor_args = self.params['postprocess']['anchor_args']
+        if self.params['postprocess']['order'] == 'hwl':
+            box = np.array([[center[0], center[1], -1.0,
+                             anchor_args['h'], anchor_args['w'],
+                             anchor_args['l'], yaw]])
+        else:
+            box = np.array([[center[0], center[1], -1.0,
+                             anchor_args['l'], anchor_args['w'],
+                             anchor_args['h'], yaw]])
+
+        box = box_utils.mask_boxes_outside_range_numpy(
+            box,
+            anchor_args['cav_lidar_range'],
+            self.params['postprocess']['order'])
+        object_ids = []
+        if box.shape[0] > 0:
+            object_np[0] = box[0]
+            mask[0] = 1
+            object_ids.append('self_pose_%s' % cav_id)
+
+        return object_np, mask, object_ids
 
     @staticmethod
     def merge_features_to_dict(processed_feature_list):
