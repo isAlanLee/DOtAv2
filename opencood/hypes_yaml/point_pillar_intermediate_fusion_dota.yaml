@@ -1,6 +1,6 @@
 name: point_pillar_intermediate_fusion
-root_dir: '/mnt/32THHD/xhe/datasets/OPV2V/train'
-validate_dir: '/mnt/32THHD/xhe/datasets/OPV2V/validate'
+root_dir: '/root/autodl-tmp/opv2v/train'
+validate_dir: '/root/autodl-tmp/opv2v/validate'
 
 yaml_parser: "load_point_pillar_params"
 train_params:
@@ -17,7 +17,7 @@ lable_free: False
 
 iterative_training: True
 
-pseudo_lable_path: '/mnt/32THHD/lwk/datas/OPV2V/out_xqm_score'
+pseudo_lable_path: '/root/autodl-tmp/out'
 
 # preprocess-related
 preprocess:
