@@ -69,6 +69,12 @@
 - 已修改 `opencood/tools/inference.py`：新增 `--pseudo_lable_dir` 参数，默认 `/root/autodl-tmp/out`；伪标签 box 保存到 `pre_box_test_full/`，分数保存到 `pre_score_test_full/`。
 - 本地轻量验证：`python -m py_compile opencood/tools/inference.py` 通过。
 
+## 2026-05-30 18:50:09 +08:00
+
+- 用户服务器完成伪标签生成推理，日志显示 `7105it`，最终 AP@0.3/0.5/0.7 仍为 0。
+- 判断：该 AP 是 `inference.py` 顺带对当前 checkpoint 做评估，不等同于伪标签是否生成成功；需要先统计 `/root/autodl-tmp/out/pre_box_test_full` 中非空预测框数量和分数分布。
+- 下一步建议：若伪标签全空或极少，优先降低 checkpoint `config.yaml` 中 `postprocess.target_args.score_threshold` 后重跑伪标签生成；若非空，则进入 MBE 过滤阶段。
+
 ## 2026-05-30 15:07:29 +08:00
 
 - 本次重新阅读项目并核对当前进度。
@@ -188,6 +194,25 @@
   - 当 `pseudo_lable_save == 0` 时自动创建 `pseduo_label_val/pre_box_test_full` 和 `pseduo_label_val/pre_score_test_full`。
   - 若某帧 `pred_box_tensor is None`，保存空数组，避免保存分支报错并保持帧索引连续。
 - 已本地 `python -m py_compile opencood/tools/inference.py` 通过。
+
+## 2026-05-30 18:51:18 +08:00
+
+- 用户重跑 V2V4Real 伪标签生成后，AP 仍为 0.00，但伪标签文件已正常保存。
+- 检查结果：`box files=7105`、`score files=7105`、`non-empty frames=5297`、`total predicted boxes=6492`、单帧最大 4 个框。
+- 示例预测框坐标和尺寸合理，例如 `pre_0.npy` 为 1 个框，中心约 `[-20.52,-0.06,-1.20]`，尺寸约 `[4.16,2.12,1.70]`。
+- 结论：初始伪标签生成阶段已完成；AP 为 0 暂不阻断后续流程。下一步应处理 MBE 脚本参数化，使用 V2V4Real 数据目录和当前伪标签目录生成 `/root/autodl-tmp/out_v2v4real/out_pseduo_labels_*.npy` 及带 score 版本。
+
+## 2026-05-30 18:53:41 +08:00
+
+- 已新增 V2V4Real 专用 MBE 脚本 `opencood/tools/mbe_v2v4real.py`，避免直接修改原始 `MBE.py` 和 `box_score_for_mbe.py` 的硬编码主流程。
+- 新脚本功能：
+  - 读取 `--data_dir` 下 OPV2V-format V2V4Real 训练集。
+  - 读取 `--pred_dir` 中 `pre_{idx}.npy` 初始伪标签。
+  - 按场景顺序和当前 dataset/inference 的全局 idx 顺序处理 7105 帧。
+  - 将预测框从 ego 坐标转到 world 坐标做 MBE 过滤，再保存回原 ego 坐标伪标签。
+  - 同时生成迭代训练需要的带 score 文件：`out_pseduo_labels_with_score_v4_{idx}.npy` 和 `out_pseduo_labels_noise_with_score_v4_{idx}.npy`。
+  - 输出目录默认 `/root/autodl-tmp/out_v2v4real`。
+- 已本地 `python -m py_compile opencood/tools/mbe_v2v4real.py` 通过。
 
 ## 2026-05-30 15:34:42 +08:00
 
