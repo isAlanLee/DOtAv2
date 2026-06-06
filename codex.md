@@ -108,3 +108,10 @@
 - 修改 `scripts/run_readme_pipeline.sh`：删除 `NPROC_PER_NODE` 参数、`--nproc-per-node` CLI、`torch.distributed.launch` 和 `--use_env`，训练步骤改为 `env CUDA_VISIBLE_DEVICES=<id> python opencood/tools/train.py --hypes_yaml ...`。
 - 同步修改 `scripts/run_readme_pipeline.py`：删除 `--nproc-per-node` 参数和分布式启动命令，训练命令改为直接运行 `opencood/tools/train.py`。
 - 验证：`rg` 搜索 `torch.distributed`、`distributed.launch`、`nproc`、`--use_env` 在两个流水线脚本中无匹配；`python -m py_compile scripts/run_readme_pipeline.py` 通过；`git diff --check -- scripts/run_readme_pipeline.py scripts/run_readme_pipeline.sh` 未发现空白错误；已清理 `scripts/__pycache__`。
+
+## 2026-06-06 22:01:43 +08:00
+- 用户说明服务器项目路径为 `/root/autodl-fs/DOtAv2`，日志也需要保存在该项目路径下；npy 保存在 `/root/autodl-tmp` 下的对应目录。
+- 修改 `scripts/run_readme_pipeline.sh`：默认 `REPO_ROOT=/root/autodl-fs/DOtAv2`，并新增/保留 `--repo-root` 参数可覆盖；`RUN_DIR` 仍为 `$REPO_ROOT/pipeline_logs/<timestamp>`。
+- 保持 npy 相关默认路径不变：`MBE_OUTPUT_DIR=/root/autodl-tmp/out_mbe`，`PSEUDO_LABEL_ROOT=/root/autodl-tmp/out_pseudo_lables`。
+- 同步修改 `scripts/run_readme_pipeline.py` 默认 `--repo-root` 为 `/root/autodl-fs/DOtAv2`。
+- 验证：`rg` 确认 `/root/autodl-fs` 与 `/root/autodl-tmp` 默认路径分工；`python -m py_compile scripts/run_readme_pipeline.py` 通过；`git diff --check -- scripts/run_readme_pipeline.py scripts/run_readme_pipeline.sh` 未发现空白错误；已清理 `scripts/__pycache__`。

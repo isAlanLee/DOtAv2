@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="/root/autodl-fs/DOtAv2"
 PYTHON_BIN="${PYTHON:-python}"
 CUDA_DEVICES="0"
 INITIAL_HYPES="opencood/hypes_yaml/point_pillar_intermediate_fusion_lable_free.yaml"
@@ -23,6 +23,7 @@ Usage: bash scripts/run_readme_pipeline.sh [options]
 
 Options:
   --python PATH                  Python executable. Default: python
+  --repo-root PATH               Project root. Default: /root/autodl-fs/DOtAv2
   --cuda-devices IDS             CUDA_VISIBLE_DEVICES value. Default: 0
   --initial-hypes PATH           Initial detector yaml.
   --dota-hypes PATH              DOTA training yaml.
@@ -43,6 +44,7 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --python) PYTHON_BIN="$2"; shift 2 ;;
+    --repo-root) REPO_ROOT="$2"; shift 2 ;;
     --cuda-devices) CUDA_DEVICES="$2"; shift 2 ;;
     --initial-hypes) INITIAL_HYPES="$2"; shift 2 ;;
     --dota-hypes) DOTA_HYPES="$2"; shift 2 ;;

@@ -19,7 +19,7 @@ import yaml
 
 
 def parse_args() -> argparse.Namespace:
-    repo_root = Path(__file__).resolve().parents[1]
+    repo_root = Path("/root/autodl-fs/DOtAv2")
     parser = argparse.ArgumentParser(
         description="Run the README DOtA pipeline and save one log per step."
     )
