@@ -26,7 +26,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repo-root", default=str(repo_root))
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--cuda-devices", default="0")
-    parser.add_argument("--nproc-per-node", default="1")
     parser.add_argument(
         "--initial-hypes",
         default="opencood/hypes_yaml/point_pillar_intermediate_fusion_lable_free.yaml",
@@ -284,7 +283,6 @@ class Pipeline:
             f"run_dir: {self.run_dir}",
             f"python: {self.args.python}",
             f"cuda_devices: {self.args.cuda_devices}",
-            f"nproc_per_node: {self.args.nproc_per_node}",
             f"initial_hypes: {initial_hypes}",
             f"dota_hypes: {dota_hypes}",
             f"mbe_output_dir: {self.args.mbe_output_dir}",
@@ -299,13 +297,9 @@ class Pipeline:
         for path in required_files:
             self.require_file(path, f"required pipeline file {path.name}")
 
-    def distributed_train_command(self, hypes_path: Path) -> list[str]:
+    def train_command(self, hypes_path: Path) -> list[str]:
         return [
             self.args.python,
-            "-m",
-            "torch.distributed.launch",
-            f"--nproc_per_node={self.args.nproc_per_node}",
-            "--use_env",
             "opencood/tools/train.py",
             "--hypes_yaml",
             str(hypes_path),
@@ -371,7 +365,7 @@ class Pipeline:
             initial_train_log = self.run_command(
                 1,
                 "train_initial_detector",
-                self.distributed_train_command(initial_hypes),
+                self.train_command(initial_hypes),
                 env_updates=env_updates,
             )
             if self.args.dry_run:
@@ -436,7 +430,7 @@ class Pipeline:
             final_train_log = self.run_command(
                 6,
                 "train_with_pseudo_labels",
-                self.distributed_train_command(generated_dota_hypes),
+                self.train_command(generated_dota_hypes),
                 env_updates=env_updates,
             )
             if self.args.dry_run:

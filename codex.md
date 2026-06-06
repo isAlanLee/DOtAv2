@@ -102,3 +102,9 @@
 - `.sh` 支持 `--shutdown-command "sudo shutdown -h now"`、`--no-system-shutdown`、`--dry-run`、`--skip-test`、已有 checkpoint 路径等参数。
 - `.sh` 每一步单独写入 `pipeline_logs/<timestamp>/NN_step.log`，并维护 `pipeline_summary.log`。
 - 验证：`rg` 检查 `.sh` 关键单卡/关机/临时 YAML 逻辑；`git diff --check -- scripts/run_readme_pipeline.sh` 未发现空白错误。本地 Windows 环境没有 `bash`，未能执行 `bash -n`，需在 Linux 服务器上运行 `bash -n scripts/run_readme_pipeline.sh` 做最终 shell 语法检查。
+
+## 2026-06-06 21:57:49 +08:00
+- 用户要求单卡训练不要使用分布式训练参数，直接 `python` 运行训练脚本。
+- 修改 `scripts/run_readme_pipeline.sh`：删除 `NPROC_PER_NODE` 参数、`--nproc-per-node` CLI、`torch.distributed.launch` 和 `--use_env`，训练步骤改为 `env CUDA_VISIBLE_DEVICES=<id> python opencood/tools/train.py --hypes_yaml ...`。
+- 同步修改 `scripts/run_readme_pipeline.py`：删除 `--nproc-per-node` 参数和分布式启动命令，训练命令改为直接运行 `opencood/tools/train.py`。
+- 验证：`rg` 搜索 `torch.distributed`、`distributed.launch`、`nproc`、`--use_env` 在两个流水线脚本中无匹配；`python -m py_compile scripts/run_readme_pipeline.py` 通过；`git diff --check -- scripts/run_readme_pipeline.py scripts/run_readme_pipeline.sh` 未发现空白错误；已清理 `scripts/__pycache__`。

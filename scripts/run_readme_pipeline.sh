@@ -4,7 +4,6 @@ set -Eeuo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON:-python}"
 CUDA_DEVICES="0"
-NPROC_PER_NODE="1"
 INITIAL_HYPES="opencood/hypes_yaml/point_pillar_intermediate_fusion_lable_free.yaml"
 DOTA_HYPES="opencood/hypes_yaml/point_pillar_intermediate_fusion_dota.yaml"
 FUSION_METHOD="intermediate"
@@ -25,7 +24,6 @@ Usage: bash scripts/run_readme_pipeline.sh [options]
 Options:
   --python PATH                  Python executable. Default: python
   --cuda-devices IDS             CUDA_VISIBLE_DEVICES value. Default: 0
-  --nproc-per-node N             torch distributed processes. Default: 1
   --initial-hypes PATH           Initial detector yaml.
   --dota-hypes PATH              DOTA training yaml.
   --fusion-method NAME           Fusion method. Default: intermediate
@@ -46,7 +44,6 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --python) PYTHON_BIN="$2"; shift 2 ;;
     --cuda-devices) CUDA_DEVICES="$2"; shift 2 ;;
-    --nproc-per-node) NPROC_PER_NODE="$2"; shift 2 ;;
     --initial-hypes) INITIAL_HYPES="$2"; shift 2 ;;
     --dota-hypes) DOTA_HYPES="$2"; shift 2 ;;
     --fusion-method) FUSION_METHOD="$2"; shift 2 ;;
@@ -206,15 +203,6 @@ require_glob() {
   [[ "${#matches[@]}" -gt 0 ]] || fail_shutdown "missing $description: $pattern"
 }
 
-train_cmd() {
-  local hypes="$1"
-  env CUDA_VISIBLE_DEVICES="$CUDA_DEVICES" "$PYTHON_BIN" -m torch.distributed.launch \
-    --nproc_per_node="$NPROC_PER_NODE" \
-    --use_env \
-    opencood/tools/train.py \
-    --hypes_yaml "$hypes"
-}
-
 parse_checkpoint_dir() {
   local log_path="$1"
   local parsed
@@ -270,7 +258,6 @@ write_step_log 0 preflight \
   "run_dir: $RUN_DIR" \
   "python: $PYTHON_BIN" \
   "cuda_devices: $CUDA_DEVICES" \
-  "nproc_per_node: $NPROC_PER_NODE" \
   "initial_hypes: $REPO_ROOT/$INITIAL_HYPES" \
   "dota_hypes: $REPO_ROOT/$DOTA_HYPES" \
   "mbe_output_dir: $MBE_OUTPUT_DIR" \
@@ -286,10 +273,7 @@ require_file "$REPO_ROOT/opencood/tools/box_score_for_mbe.py" "box_score_for_mbe
 if [[ -z "$INITIAL_DETECTOR_DIR" ]]; then
   run_step 1 train_initial_detector \
     env CUDA_VISIBLE_DEVICES="$CUDA_DEVICES" \
-    "$PYTHON_BIN" -m torch.distributed.launch \
-    --nproc_per_node="$NPROC_PER_NODE" \
-    --use_env \
-    opencood/tools/train.py \
+    "$PYTHON_BIN" opencood/tools/train.py \
     --hypes_yaml "$INITIAL_HYPES"
   if [[ "$DRY_RUN" -eq 1 ]]; then
     INITIAL_DETECTOR_DIR="\$INITIAL_DETECTOR_CHECKPOINT_FOLDER"
@@ -340,10 +324,7 @@ require_file "$GENERATED_DOTA_HYPES" "generated DOTA hypes yaml"
 if [[ -z "$FINAL_CHECKPOINT_DIR" ]]; then
   run_step 6 train_with_pseudo_labels \
     env CUDA_VISIBLE_DEVICES="$CUDA_DEVICES" \
-    "$PYTHON_BIN" -m torch.distributed.launch \
-    --nproc_per_node="$NPROC_PER_NODE" \
-    --use_env \
-    opencood/tools/train.py \
+    "$PYTHON_BIN" opencood/tools/train.py \
     --hypes_yaml "$GENERATED_DOTA_HYPES"
   if [[ "$DRY_RUN" -eq 1 ]]; then
     FINAL_CHECKPOINT_DIR="\$CHECKPOINT_FOLDER"
