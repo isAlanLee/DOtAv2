@@ -66,3 +66,25 @@
 - 删除 `box_score_for_mbe.py` 中不参与算分且会阻断运行的旧 `F:\OPV2V\OPV2V\gt_box\...` 读取逻辑；清理旧 Windows 路径。
 - `box_score_for_mbe.py` 当前将带 score 的伪标签输出到 `/root/autodl-tmp/out_mbe/score`，后续迭代训练可将 YAML 的 `pseudo_lable_path` 指向该目录。
 - 验证：旧硬编码路径搜索无匹配；`python -m py_compile opencood/tools/MBE.py opencood/tools/box_score_for_mbe.py` 通过；`git diff --check -- opencood/tools/MBE.py opencood/tools/box_score_for_mbe.py` 未发现空白错误。
+
+## 2026-06-06 21:35:51 +08:00
+- 根据用户要求新增流水线脚本 `scripts/run_readme_pipeline.py`，按 README 顺序执行：初始检测器训练、初始伪标签生成、MBE、MBE box score、DOTA 伪标签训练、最终测试。
+- 脚本为每一步在 `pipeline_logs/<timestamp>/` 下保存独立 log，并维护 `pipeline_summary.log`。
+- 脚本实现 fail-fast shutdown：任一步命令返回非零、关键产物缺失或 checkpoint 解析失败时，终止当前子进程、停止后续步骤并以非零状态退出；该 shutdown 不执行系统关机。
+- 脚本会从训练日志自动解析 checkpoint 目录；也支持通过 `--initial-detector-dir` 或 `--final-checkpoint-dir` 传入已有 checkpoint。
+- 脚本会生成临时 DOTA YAML，将 `iterative_training` 设为 `True`，并将 `pseudo_lable_path` 指向 `/root/autodl-tmp/out_mbe/score`，不直接覆盖用户原始 YAML。
+- 验证：`python -m py_compile scripts/run_readme_pipeline.py` 通过；`git diff --check -- scripts/run_readme_pipeline.py` 未发现空白错误；已清理 `scripts/__pycache__`。
+
+## 2026-06-06 21:38:53 +08:00
+- 根据用户要求检查 `scripts/run_readme_pipeline.py` 是否符合 DOtA 论文流程。
+- 对照 DOtA 论文：论文概述流程为 Preliminary Label Generation、MBE label filtering、LICL 三阶段；脚本顺序为初始 detector 训练、初始伪标签生成、MBE、`box_score_for_mbe.py` 打分、DOTA 伪标签训练、最终测试，整体顺序一致。
+- 对照当前初始 YAML：`opencood/hypes_yaml/point_pillar_intermediate_fusion_lable_free.yaml` 的 `score_threshold` 已为 `0.01`，符合论文中为了高召回保留初始伪标签的低阈值设置。
+- 对照当前 DOTA YAML 与模型：脚本生成临时 YAML 保持 `iterative_training=True` 并指向 `/root/autodl-tmp/out_mbe/score`；模型在 `iterative_training` 时使用正/负伪标签计算 contrastive loss，符合 LICL 训练阶段。
+- 剩余注意事项：最终测试是否完全符合论文评估，仍依赖最终 checkpoint 下 `config.yaml` 的 `validate_dir` 是否指向 test split；脚本目前未自动验证或修改该路径。
+
+## 2026-06-06 21:40:41 +08:00
+- 用户澄清脚本将在 Linux 服务器上运行，失败时需要使用真实 `shutdown` 命令关机。
+- 修改 `scripts/run_readme_pipeline.py` 的失败处理：任一步失败时先终止当前子进程、写入 `shutdown.log`，再默认执行 `shutdown -h now`。
+- 新增参数 `--shutdown-command`，可改为例如 `sudo shutdown -h now`；新增 `--no-system-shutdown` 用于调试时只停止流水线不关机。
+- `--dry-run` 模式不会执行系统关机命令。
+- 验证：`python -m py_compile scripts/run_readme_pipeline.py` 通过；`git diff --check -- scripts/run_readme_pipeline.py` 未发现空白错误；已清理 `scripts/__pycache__`。
