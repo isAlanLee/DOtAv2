@@ -506,6 +506,11 @@ if __name__ == '__main__':
     vi = Viewer()
 
     path = "/root/autodl-tmp/opv2v/train"
+    mbe_output_dir = '/root/autodl-tmp/out_mbe'
+    point_cache_dir = os.path.join(mbe_output_dir, 'multi_agent_point_remove_ground')
+    pose_cache_dir = os.path.join(mbe_output_dir, 'multi_agent_point_pose')
+    score_output_dir = os.path.join(mbe_output_dir, 'score')
+    os.makedirs(score_output_dir, exist_ok=True)
 
     # print(os.listdir(path))
     scenario_folders = sorted([os.path.join(path, x)    # 单个元素的例：.../OPV2V/train/2021_08_16_22_26_54，为一个场景
@@ -531,24 +536,13 @@ if __name__ == '__main__':
             timestamps.append(timestamp)
         node_timestamp = node_timestamp + len(timestamps)
 
-        multi_agent_point = np.load(f'F:\\OPV2V\\OPV2V\\multi_agent_point_remove_ground\\multi_agent_point{count}.npy', allow_pickle=True)
-        poses = np.load(f'F:\\OPV2V\\OPV2V\\multi_agent_point_pose\\multi_agent_point_pose{count}.npy', allow_pickle=True)
+        multi_agent_point = np.load(os.path.join(point_cache_dir, f'multi_agent_point{count}.npy'), allow_pickle=True)
+        poses = np.load(os.path.join(pose_cache_dir, f'multi_agent_point_pose{count}.npy'), allow_pickle=True)
 
         for num_timestamp in tqdm(range(node_timestamp-len(timestamps), node_timestamp)):
             # if count < 2:
             #     continue
-            gt = np.load(f'F:\\OPV2V\\OPV2V\\gt_box\\gt_{num_timestamp}.npy')
-            # pseduo_labels = gt.copy()
 
-            gtbox_center = gt[:, :3].copy()
-            gtbox_center_new = pc_2_world(gtbox_center, poses[0][num_timestamp - node_timestamp + len(timestamps)])
-            gtdif_ang = get_registration_angle(x_to_world(poses[0][num_timestamp - node_timestamp + len(timestamps)]))
-            gt[:, :3] = gtbox_center_new[:, :3]
-            gt[:, 6] = gt[:, 6] + gtdif_ang
-
-
-            # np.save(f'F:\\OPV2V\\OPV2V\\out_v4\\out_pseduo_labels_v4_{num_timestamp}.npy', pseduo_labels_[out_pseduo_labels])
-            # np.save(f'F:\\OPV2V\\OPV2V\\out_v4\\out_pseduo_labels_noise_v4_{num_timestamp}.npy', pseduo_labels_[inverted_list])
 #################################################################################
             #     # clear_points = remove_ground_points(multi_agent_point[m][key][:, :3])
             #     # vi.add_points(clear_points)
@@ -581,8 +575,8 @@ if __name__ == '__main__':
                 dense_points_multi_frame.append(dense_points)
 
 
-            pseduo_labels = np.load(f'C:\\Users\\Administrator\\Desktop\\新建文件夹 (6)\\新建文件夹\\out_xqm\\out_pseduo_labels_v1_{num_timestamp}.npy')
-            pseduo_labels_error = np.load(f'C:\\Users\\Administrator\\Desktop\\新建文件夹 (6)\\新建文件夹\\out_xqm\\out_pseduo_labels_noise_v1_{num_timestamp}.npy')
+            pseduo_labels = np.load(os.path.join(mbe_output_dir, f'out_pseduo_labels_v1_{num_timestamp}.npy'))
+            pseduo_labels_error = np.load(os.path.join(mbe_output_dir, f'out_pseduo_labels_noise_v1_{num_timestamp}.npy'))
             pseduo_labels_ = pseduo_labels.copy()
             pseduo_labels_error_ = pseduo_labels_error.copy()
 
@@ -623,7 +617,7 @@ if __name__ == '__main__':
 
             total_score = np.array(total_score)
             pseduo_labels_with_score = np.hstack((pseduo_labels_, total_score.reshape(-1, 1)))
-            np.save(f'F:\\OPV2V\\OPV2V\\out_xqm_score\\out_pseduo_labels_with_score_v4_{num_timestamp}.npy', pseduo_labels_with_score)
+            np.save(os.path.join(score_output_dir, f'out_pseduo_labels_with_score_v4_{num_timestamp}.npy'), pseduo_labels_with_score)
 
 
             total_score_error = []
@@ -649,7 +643,7 @@ if __name__ == '__main__':
 
             total_score_error = np.array(total_score_error)
             pseduo_labels_noise_with_score = np.hstack((pseduo_labels_error_, total_score_error.reshape(-1, 1)))
-            np.save(f'F:\\OPV2V\\OPV2V\\out_xqm_score\\out_pseduo_labels_noise_with_score_v4_{num_timestamp}.npy', pseduo_labels_noise_with_score)
+            np.save(os.path.join(score_output_dir, f'out_pseduo_labels_noise_with_score_v4_{num_timestamp}.npy'), pseduo_labels_noise_with_score)
 
         count += 1
 

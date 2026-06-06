@@ -343,6 +343,7 @@ def return_pl_frome_single_scenario(count, node_timestamp_lsit):
     scenario_folders = sorted([os.path.join(path, x)  
                                for x in os.listdir(path) if
                                os.path.isdir(os.path.join(path, x))])
+    scenario_folder = scenario_folders[count]
     cav_list = sorted([x for x in os.listdir(scenario_folders[count]) 
                        if os.path.isdir(
             os.path.join(scenario_folders[count], x))])
@@ -392,8 +393,17 @@ def return_pl_frome_single_scenario(count, node_timestamp_lsit):
         multi_agent_point.append(single_agent_point)
    
     # 检查/root/autodl-tmp/out_mbe是否存在，如果不存在则创建
-    if not os.path.exists('/root/autodl-tmp/out_mbe'):
-        os.makedirs('/root/autodl-tmp/out_mbe')
+    mbe_output_dir = '/root/autodl-tmp/out_mbe'
+    point_cache_dir = os.path.join(mbe_output_dir, 'multi_agent_point_remove_ground')
+    pose_cache_dir = os.path.join(mbe_output_dir, 'multi_agent_point_pose')
+    os.makedirs(mbe_output_dir, exist_ok=True)
+    os.makedirs(point_cache_dir, exist_ok=True)
+    os.makedirs(pose_cache_dir, exist_ok=True)
+
+    np.save(os.path.join(point_cache_dir, f'multi_agent_point{count}.npy'),
+            np.array(multi_agent_point, dtype=object))
+    np.save(os.path.join(pose_cache_dir, f'multi_agent_point_pose{count}.npy'),
+            np.array(poses, dtype=object))
 
     for num_timestamp in tqdm(range(cur_timestamps, node_timestamp)): #tqdm(range(node_timestamp-len(timestamps), node_timestamp))
         
@@ -421,9 +431,9 @@ def return_pl_frome_single_scenario(count, node_timestamp_lsit):
 
         inverted_list = [not x for x in out_pseduo_labels]
 
-        np.save(f'/root/autodl-tmp/out_mbe/out_pseduo_labels_v1_{num_timestamp}.npy',
+        np.save(os.path.join(mbe_output_dir, f'out_pseduo_labels_v1_{num_timestamp}.npy'),
                 pseduo_labels_[out_pseduo_labels])
-        np.save(f'/root/autodl-tmp/out_mbe/out_pseduo_labels_noise_v1_{num_timestamp}.npy',
+        np.save(os.path.join(mbe_output_dir, f'out_pseduo_labels_noise_v1_{num_timestamp}.npy'),
                 pseduo_labels_[inverted_list])
     
     return True
