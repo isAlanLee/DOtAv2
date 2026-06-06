@@ -25,8 +25,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--repo-root", default=str(repo_root))
     parser.add_argument("--python", default=sys.executable)
-    parser.add_argument("--cuda-devices", default="0,1")
-    parser.add_argument("--nproc-per-node", default="2")
+    parser.add_argument("--cuda-devices", default="0")
+    parser.add_argument("--nproc-per-node", default="1")
     parser.add_argument(
         "--initial-hypes",
         default="opencood/hypes_yaml/point_pillar_intermediate_fusion_lable_free.yaml",

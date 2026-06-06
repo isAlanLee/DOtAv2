@@ -88,3 +88,17 @@
 - 新增参数 `--shutdown-command`，可改为例如 `sudo shutdown -h now`；新增 `--no-system-shutdown` 用于调试时只停止流水线不关机。
 - `--dry-run` 模式不会执行系统关机命令。
 - 验证：`python -m py_compile scripts/run_readme_pipeline.py` 通过；`git diff --check -- scripts/run_readme_pipeline.py` 未发现空白错误；已清理 `scripts/__pycache__`。
+
+## 2026-06-06 21:47:19 +08:00
+- 用户要求流水线使用单卡 GPU。
+- 修改 `scripts/run_readme_pipeline.py` 默认参数：`--cuda-devices` 从 `0,1` 改为 `0`，`--nproc-per-node` 从 `2` 改为 `1`。
+- 脚本训练命令仍使用 `torch.distributed.launch`，但默认以单进程单 GPU 启动；如需更换 GPU 可传 `--cuda-devices <id>`。
+- 验证：`python -m py_compile scripts/run_readme_pipeline.py` 通过；`rg` 确认默认值与 `CUDA_VISIBLE_DEVICES`/`--nproc_per_node` 使用位置；`git diff --check -- scripts/run_readme_pipeline.py` 未发现空白错误；已清理 `scripts/__pycache__`。
+
+## 2026-06-06 21:50:33 +08:00
+- 用户反馈 Python 流水线中的关机有问题，要求改用 `.sh`。
+- 新增 Linux bash 流水线脚本 `scripts/run_readme_pipeline.sh`，按 README/DOtA 流程执行：初始 detector 训练、初始伪标签生成、MBE、MBE box score、DOTA 伪标签训练、最终测试。
+- `.sh` 默认单卡：`CUDA_DEVICES=0`、`NPROC_PER_NODE=1`；失败时写入 `shutdown.log` 并默认执行 `shutdown -h now`。
+- `.sh` 支持 `--shutdown-command "sudo shutdown -h now"`、`--no-system-shutdown`、`--dry-run`、`--skip-test`、已有 checkpoint 路径等参数。
+- `.sh` 每一步单独写入 `pipeline_logs/<timestamp>/NN_step.log`，并维护 `pipeline_summary.log`。
+- 验证：`rg` 检查 `.sh` 关键单卡/关机/临时 YAML 逻辑；`git diff --check -- scripts/run_readme_pipeline.sh` 未发现空白错误。本地 Windows 环境没有 `bash`，未能执行 `bash -n`，需在 Linux 服务器上运行 `bash -n scripts/run_readme_pipeline.sh` 做最终 shell 语法检查。
