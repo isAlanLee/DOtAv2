@@ -58,3 +58,11 @@
 - 核对 `opencood/data_utils/datasets/intermediate_fusion_dataset.py:160-169`：当 `iterative_training=True` 时，训练数据集硬编码读取 `out_pseduo_labels_with_score_v4_{idx}.npy` 和 `out_pseduo_labels_noise_with_score_v4_{idx}.npy`。
 - 核对 `opencood/data_utils/post_processor/voxel_postprocessor.py:186-191` 与 `opencood/loss/point_pillar_loss.py:134-143`：若伪标签有第 8 列 score，则用于 `targets_score` 加权回归 loss；若没有第 8 列，则代码会 fallback 为 1。
 - 当前判断：`box_score_for_mbe.py` 不是所有流程都必须运行；但若要按当前代码执行 DOtA 的迭代伪标签训练并使用 score 加权，则必须先运行它或生成等价的 `with_score` 伪标签文件。
+
+## 2026-06-06 21:27:36 +08:00
+- 根据用户要求修改 `opencood/tools/MBE.py`，在每个 scenario 构造完成 `multi_agent_point` 和 `poses` 后保存缓存，供 `box_score_for_mbe.py` 使用。
+- 新增缓存保存路径：`/root/autodl-tmp/out_mbe/multi_agent_point_remove_ground/multi_agent_point{count}.npy` 与 `/root/autodl-tmp/out_mbe/multi_agent_point_pose/multi_agent_point_pose{count}.npy`。
+- 同步修改 `opencood/tools/box_score_for_mbe.py`，从上述 MBE 缓存目录读取点云/pose，并从 `/root/autodl-tmp/out_mbe` 读取 MBE 输出的正/负伪标签。
+- 删除 `box_score_for_mbe.py` 中不参与算分且会阻断运行的旧 `F:\OPV2V\OPV2V\gt_box\...` 读取逻辑；清理旧 Windows 路径。
+- `box_score_for_mbe.py` 当前将带 score 的伪标签输出到 `/root/autodl-tmp/out_mbe/score`，后续迭代训练可将 YAML 的 `pseudo_lable_path` 指向该目录。
+- 验证：旧硬编码路径搜索无匹配；`python -m py_compile opencood/tools/MBE.py opencood/tools/box_score_for_mbe.py` 通过；`git diff --check -- opencood/tools/MBE.py opencood/tools/box_score_for_mbe.py` 未发现空白错误。
