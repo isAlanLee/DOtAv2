@@ -129,6 +129,9 @@ def classify_state(inter_points_number_total, convex_hull_number_total, distance
     c1 = 0
     c2 = 0
 
+    distance_total = np.asarray(distance_total, dtype=np.float64)
+    distance_weight = 1.0 / np.maximum(distance_total ** 2, 1e-6)
+    distance_weight = distance_weight / np.sum(distance_weight)
 
     for i in range(len(inter_points_number_total)):
         score_r_1 = ( inter_points_number_total[i][0] - inter_points_number_total[i][1] ) / inter_points_number_total[i][1]
@@ -139,7 +142,7 @@ def classify_state(inter_points_number_total, convex_hull_number_total, distance
         score_0_2 = ( convex_hull_number_total[i][3] - convex_hull_number_total[i][4] ) / convex_hull_number_total[i][3]
         score_0 = ( score_0_1 + score_0_2 ) / 2
 
-        score_d = distance_total[i]/ sum(distance_total)
+        score_d = distance_weight[i]
 
         c1 += score_r * score_d
         c2 += score_0 * score_d
@@ -336,7 +339,7 @@ def load_yaml(file, opt=None):
 
 def return_pl_frome_single_scenario(count, node_timestamp_lsit):
   
-    path = '/mnt/32THHD/xhe/datasets/OPV2V/train'
+    path = '/root/autodl-tmp/opv2v/train'
     scenario_folders = sorted([os.path.join(path, x)  
                                for x in os.listdir(path) if
                                os.path.isdir(os.path.join(path, x))])
@@ -388,12 +391,15 @@ def return_pl_frome_single_scenario(count, node_timestamp_lsit):
         single_agent_points = np.concatenate(single_agent_point, axis=0)
         multi_agent_point.append(single_agent_point)
    
+    # 检查/root/autodl-tmp/out_mbe是否存在，如果不存在则创建
+    if not os.path.exists('/root/autodl-tmp/out_mbe'):
+        os.makedirs('/root/autodl-tmp/out_mbe')
 
     for num_timestamp in tqdm(range(cur_timestamps, node_timestamp)): #tqdm(range(node_timestamp-len(timestamps), node_timestamp))
         
 
-            
-        pseduo_labels = np.load(f'/mnt/32THHD/lwk/codes/OpenCOOD/pseduo_label_moma_1/pre_{num_timestamp}.npy')
+        # 在inference.py中line 150-151处生成
+        pseduo_labels = np.load(f'/root/autodl-tmp/out_pseudo_lables/pre_box_test_full/pre_{num_timestamp}.npy')
        
         pseduo_labels_ = pseduo_labels.copy()
 
@@ -415,9 +421,9 @@ def return_pl_frome_single_scenario(count, node_timestamp_lsit):
 
         inverted_list = [not x for x in out_pseduo_labels]
 
-        np.save(f'/mnt/32THHD/lwk/datas/OPV2V/out_xqm_moma_1_plus_ONLY_DENSITY/out_pseduo_labels_v1_{num_timestamp}.npy',
+        np.save(f'/root/autodl-tmp/out_mbe/out_pseduo_labels_v1_{num_timestamp}.npy',
                 pseduo_labels_[out_pseduo_labels])
-        np.save(f'/mnt/32THHD/lwk/datas/OPV2V/out_xqm_moma_1_plus_ONLY_DENSITY/out_pseduo_labels_noise_v1_{num_timestamp}.npy',
+        np.save(f'/root/autodl-tmp/out_mbe/out_pseduo_labels_noise_v1_{num_timestamp}.npy',
                 pseduo_labels_[inverted_list])
     
     return True
@@ -427,7 +433,7 @@ import itertools
 if __name__ == '__main__':
 
 
-    path = "/mnt/32THHD/xhe/datasets/OPV2V/train"
+    path = "/root/autodl-tmp/opv2v/train"
 
     scenario_folders = sorted([os.path.join(path, x)  # 单个元素的例：.../OPV2V/train/2021_08_16_22_26_54，为一个场景
                                for x in os.listdir(path) if

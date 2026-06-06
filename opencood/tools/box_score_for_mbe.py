@@ -505,7 +505,7 @@ if __name__ == '__main__':
 
     vi = Viewer()
 
-    path = "F:\\OPV2V\\OPV2V\\train"
+    path = "/root/autodl-tmp/opv2v/train"
 
     # print(os.listdir(path))
     scenario_folders = sorted([os.path.join(path, x)    # 单个元素的例：.../OPV2V/train/2021_08_16_22_26_54，为一个场景

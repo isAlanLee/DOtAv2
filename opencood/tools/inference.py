@@ -106,6 +106,18 @@ def main():
             vis_aabbs_gt.append(o3d.geometry.LineSet())
             vis_aabbs_pred.append(o3d.geometry.LineSet())
 
+    # 检查/root/autodl-tmp/out_pseudo_lables/pre_box_test_full/
+    # 及/root/autodl-tmp/out_pseudo_lables/pre_score_test_full/
+    # 是否已创建，并且是否有文件生成
+    pre_box_path = '/root/autodl-tmp/out_pseudo_lables/pre_box_test_full'
+    pre_score_path = '/root/autodl-tmp/out_pseudo_lables/pre_score_test_full'
+
+    if not os.path.exists(pre_box_path):
+        os.makedirs(pre_box_path)
+    if not os.path.exists(pre_score_path):
+        os.makedirs(pre_score_path)
+    
+
     for i, batch_data in tqdm(enumerate(data_loader)):
         # print(i)
         with torch.no_grad():
