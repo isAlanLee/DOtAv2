@@ -137,7 +137,7 @@ def classify_state(inter_points_number_total, convex_hull_number_total, distance
 
         score_0_1 = ( convex_hull_number_total[i][2] - convex_hull_number_total[i][3] ) / convex_hull_number_total[i][2]
         score_0_2 = ( convex_hull_number_total[i][3] - convex_hull_number_total[i][4] ) / convex_hull_number_total[i][3]
-        score_0 = ( score_r_1 + score_r_2 ) / 2
+        score_0 = ( score_0_1 + score_0_2 ) / 2
 
         score_d = distance_total[i]/ sum(distance_total)
 
