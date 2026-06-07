@@ -171,3 +171,11 @@
 - 修改 `opencood/tools/box_score_for_mbe.py`：将 `from viewer.viewer import Viewer` 改为可选导入，缺少 viewer 包时设置 `Viewer = None`，主入口使用 `vi = Viewer() if Viewer is not None else None`。
 - 当前判断：该修复不会改变 box score 计算逻辑，只避免服务器无可视化依赖时流程被阻断。
 - 验证：`python -m py_compile opencood/tools/box_score_for_mbe.py` 通过；`git diff --check -- opencood/tools/box_score_for_mbe.py codex.md` 未发现空白错误，仅有 Windows 工作区 LF/CRLF 提示；已清理编译产生的 `opencood/tools/__pycache__`。
+
+## 2026-06-07 19:23:04 +08:00
+- 用户要求提供从 `mbe_score` 开始的后续所有指令脚本。
+- 新增 `scripts/resume_from_mbe_score.sh`，用于从第 04 步 `score_mbe_boxes` 继续执行后续流程：`box_score_for_mbe.py`、生成临时 DOTA YAML、单卡训练 `train.py`、最终 `inference.py` 测试。
+- 脚本默认服务器路径：`REPO_ROOT=/root/autodl-fs/DOtAv2`，`MBE_OUTPUT_DIR=/root/autodl-tmp/out_mbe`，日志保存到 `$REPO_ROOT/pipeline_logs/resume_mbe_score_<timestamp>/`。
+- 脚本默认单卡运行：`CUDA_VISIBLE_DEVICES=0`，不使用分布式训练参数；并设置 `OMP_NUM_THREADS=1`、`MKL_NUM_THREADS=1`、`OPENBLAS_NUM_THREADS=1`。
+- 脚本默认失败后执行 `shutdown -h now`，支持 `--no-system-shutdown`、`--dry-run`、`--skip-test`、`--final-checkpoint-dir` 等参数。
+- 验证：`git diff --check -- scripts/resume_from_mbe_score.sh` 未发现空白错误；`rg` 检查确认脚本包含路径、单卡、shutdown、打分、训练、测试和产物检查逻辑。
