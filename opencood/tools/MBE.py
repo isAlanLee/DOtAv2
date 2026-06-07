@@ -12,7 +12,7 @@ from scipy.spatial import Delaunay
 from functools import partial
 import multiprocessing
 import math
-from scipy.spatial import ConvexHull
+from scipy.spatial import ConvexHull, QhullError
 
 
 def in_hull(p, hull):
@@ -91,6 +91,9 @@ import random
 
 
 def remove_ground_points(point_cloud, max_iterations=100, distance_threshold=0.2):
+    if point_cloud.shape[0] < 3:
+        return point_cloud
+
     ground_points = []
     non_ground_points = []
 
@@ -131,15 +134,27 @@ def classify_state(inter_points_number_total, convex_hull_number_total, distance
 
     distance_total = np.asarray(distance_total, dtype=np.float64)
     distance_weight = 1.0 / np.maximum(distance_total ** 2, 1e-6)
-    distance_weight = distance_weight / np.sum(distance_weight)
+    weight_sum = np.sum(distance_weight)
+    if weight_sum <= 0:
+        return 0
+    distance_weight = distance_weight / weight_sum
+
+    def safe_ratio(numerator, denominator):
+        if denominator <= 0:
+            return 0
+        return numerator / denominator
 
     for i in range(len(inter_points_number_total)):
-        score_r_1 = ( inter_points_number_total[i][0] - inter_points_number_total[i][1] ) / inter_points_number_total[i][1]
-        score_r_2 = ( inter_points_number_total[i][1] - inter_points_number_total[i][2] ) / inter_points_number_total[i][2]
+        score_r_1 = safe_ratio(inter_points_number_total[i][0] - inter_points_number_total[i][1],
+                               inter_points_number_total[i][1])
+        score_r_2 = safe_ratio(inter_points_number_total[i][1] - inter_points_number_total[i][2],
+                               inter_points_number_total[i][2])
         score_r = ( score_r_1 + score_r_2 ) / 2
 
-        score_0_1 = ( convex_hull_number_total[i][2] - convex_hull_number_total[i][3] ) / convex_hull_number_total[i][2]
-        score_0_2 = ( convex_hull_number_total[i][3] - convex_hull_number_total[i][4] ) / convex_hull_number_total[i][3]
+        score_0_1 = safe_ratio(convex_hull_number_total[i][2] - convex_hull_number_total[i][3],
+                               convex_hull_number_total[i][2])
+        score_0_2 = safe_ratio(convex_hull_number_total[i][3] - convex_hull_number_total[i][4],
+                               convex_hull_number_total[i][3])
         score_0 = ( score_0_1 + score_0_2 ) / 2
 
         score_d = distance_weight[i]
@@ -177,6 +192,7 @@ def box_filter(pseduo_labels, multi_agent_point, ok, now_timestamp):
 
             inter_points_number_val_scal = []
             convex_hull_number_val_scal = []
+            points_this_timestamp = multi_agent_point[car_num][now_timestamp]
 
             for scale in range(len(scale_var)):
                 # scale_box = pseduo_labels[j][:7].copy()
@@ -185,15 +201,26 @@ def box_filter(pseduo_labels, multi_agent_point, ok, now_timestamp):
                 scale_box[3:6] = pseduo_labels[j][3:6] * scale_var[scale]
                 scale_box[6] = pseduo_labels[j][6]
                 # vi.add_3D_boxes(scale_box.reshape(-1, 7), color='red')
-                inter_mask_scale = in_hull(multi_agent_point[car_num][now_timestamp][:, :3],
+                if points_this_timestamp.shape[0] == 0:
+                    inter_points_number_val_scal.append(0)
+                    convex_hull_number_val_scal.append(0)
+                    continue
+
+                inter_mask_scale = in_hull(points_this_timestamp[:, :3],
                                  boxes_to_corners_3d(scale_box.reshape(-1, 7)).reshape(-1, 3))
-                inter_points_scale = multi_agent_point[car_num][now_timestamp][:, :3][inter_mask_scale]
-                convex_hull_scale = inter_points_scale[ConvexHull(inter_points_scale).vertices]
+                inter_points_scale = points_this_timestamp[:, :3][inter_mask_scale]
+                if inter_points_scale.shape[0] < 4:
+                    convex_hull_count = 0
+                else:
+                    try:
+                        convex_hull_count = ConvexHull(inter_points_scale).vertices.shape[0]
+                    except (QhullError, ValueError):
+                        convex_hull_count = 0
 
 
                 # vi.add_points(inter_points_scale[:, :3], color='red', radius=10)
                 inter_points_number_val_scal.append(inter_points_scale.shape[0])
-                convex_hull_number_val_scal.append(convex_hull_scale.shape[0])
+                convex_hull_number_val_scal.append(convex_hull_count)
 
             inter_points_number_total.append(inter_points_number_val_scal)
             convex_hull_number_total.append(convex_hull_number_val_scal)
@@ -226,11 +253,23 @@ def pcd_to_np(pcd_file):
         The lidar data in numpy format, shape:(n, 4)
 
     """
+    if not os.path.exists(pcd_file):
+        print(f'Warning: missing pcd file {pcd_file}')
+        return np.empty((0, 4), dtype=np.float32)
+
     pcd = o3d.io.read_point_cloud(pcd_file)
 
     xyz = np.asarray(pcd.points)
+    if xyz.shape[0] == 0:
+        print(f'Warning: empty pcd file {pcd_file}')
+        return np.empty((0, 4), dtype=np.float32)
+
     # we save the intensity in the first channel
-    intensity = np.expand_dims(np.asarray(pcd.colors)[:, 0], -1)
+    colors = np.asarray(pcd.colors)
+    if colors.shape[0] == xyz.shape[0]:
+        intensity = np.expand_dims(colors[:, 0], -1)
+    else:
+        intensity = np.zeros((xyz.shape[0], 1))
     pcd_np = np.hstack((xyz, intensity))
 
     return np.asarray(pcd_np, dtype=np.float32)
@@ -284,6 +323,9 @@ def multi_pt2world(points_path, poses):
     points = []
     for point_path, pose in zip(points_path, poses):
         point = pcd_to_np(point_path)
+        if point.shape[0] == 0:
+            points.append(np.empty((0, 4), dtype=np.float32))
+            continue
         point_homogeneous = np.hstack((point[:, :3], np.ones((point.shape[0], 1))))
         pose_ = x_to_world(pose)
         point_ = np.dot(pose_, point_homogeneous.T).T
@@ -293,6 +335,9 @@ def multi_pt2world(points_path, poses):
 
 
 def pc_2_world(points, poses):
+    if points.shape[0] == 0:
+        return np.empty((0, 4), dtype=np.float32)
+
     point_homogeneous = np.hstack((points[:, :3], np.ones((points.shape[0], 1))))
     pose_ = x_to_world(poses)
     point_ = np.dot(pose_, point_homogeneous.T).T
@@ -355,6 +400,11 @@ def return_pl_frome_single_scenario(count, node_timestamp_lsit):
                     x.endswith('.yaml') and 'additional' not in x])
         break
 
+    scenario_timestamps = []
+    for file in yaml_files:
+        res = file.split(os.path.sep)[-1]
+        scenario_timestamps.append(res.replace('.yaml', ''))
+
     
     
     cur_timestamps = node_timestamp_lsit[count] 
@@ -370,7 +420,7 @@ def return_pl_frome_single_scenario(count, node_timestamp_lsit):
         single_agent_point = []
         pose = []
         yaml_file_name_list = []
-        for timestamp in timestamps:
+        for timestamp in scenario_timestamps:
             pcd_file_name = timestamp + ".pcd"
             point_path = os.path.join(cav_path, pcd_file_name)
             points_local = pcd_to_np(point_path)
@@ -389,7 +439,6 @@ def return_pl_frome_single_scenario(count, node_timestamp_lsit):
         poses.append(pose)
         yaml_file_list.append(yaml_file_name_list)
     
-        single_agent_points = np.concatenate(single_agent_point, axis=0)
         multi_agent_point.append(single_agent_point)
    
     # 检查/root/autodl-tmp/out_mbe是否存在，如果不存在则创建
@@ -478,7 +527,7 @@ if __name__ == '__main__':
         current_sum += node_timestamp_lsit[num]
         new_list.append(current_sum) 
 
-    sample_sequence_file_list = [i for i in range(43)]
+    sample_sequence_file_list = [i for i in range(len(scenario_folders))]
 
 
     process_single_sequence = partial(

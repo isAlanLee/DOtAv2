@@ -115,3 +115,46 @@
 - 保持 npy 相关默认路径不变：`MBE_OUTPUT_DIR=/root/autodl-tmp/out_mbe`，`PSEUDO_LABEL_ROOT=/root/autodl-tmp/out_pseudo_lables`。
 - 同步修改 `scripts/run_readme_pipeline.py` 默认 `--repo-root` 为 `/root/autodl-fs/DOtAv2`。
 - 验证：`rg` 确认 `/root/autodl-fs` 与 `/root/autodl-tmp` 默认路径分工；`python -m py_compile scripts/run_readme_pipeline.py` 通过；`git diff --check -- scripts/run_readme_pipeline.py scripts/run_readme_pipeline.sh` 未发现空白错误；已清理 `scripts/__pycache__`。
+
+## 2026-06-06 22:06:32 +08:00
+- 用户提供服务器运行日志：`train_initial_detector` 在 Dataset Building 阶段导入 `spconv` 失败。
+- 诊断：根因是服务器环境中的 `spconv/cumm/torch/CUDA` 版本或二进制 ABI 不兼容；`sp_voxel_preprocessor.py` 先尝试 `VoxelGeneratorV2`，失败后再 fallback 到 `Point2VoxelCPU3d`，第二次导入触发 `ExternalAllocator already defined`，但根本问题仍是第一次 `spconv.core_cc` 扩展导入失败。
+- 修改 `scripts/run_readme_pipeline.sh` 的 `run_step()`：执行步骤命令时临时关闭 `ERR` trap，避免命令失败被误报为 `unexpected error`；现在会明确记录 `step NN <name> failed with return code ...` 后再触发关机逻辑。
+- 验证：`rg` 确认 `run_step()` 中 `set +E/set -E` 与失败路径；`git diff --check -- scripts/run_readme_pipeline.sh` 未发现空白错误。
+
+## 2026-06-06 22:08:24 +08:00
+- 用户在服务器确认环境：`torch 1.10.2+cu113`、CUDA `11.3`，同时安装了 `cumm 0.5.3`、`cumm-cu113 0.4.11`、`spconv-cu113 2.3.6`。
+- 单独测试 `from spconv.utils import Point2VoxelCPU3d` 仍失败，报 `tv::Tensor` 默认参数无法注册。
+- 当前判断：普通 `cumm` 与 CUDA 版 `cumm-cu113` 同时存在，极可能导致 `spconv` 绑定加载到不匹配的 `cumm/tensorview`，需要卸载冲突包并只保留与 CUDA 11.3 匹配的一组 `spconv-cu113/cumm-cu113`。
+
+## 2026-06-06 22:10:51 +08:00
+- 用户提供 `scripts/run_readme_pipeline.sh --dry-run` 日志：第 5 步 `prepare_dota_hypes` 因 dry-run 未实际生成临时 YAML，但随后仍执行 `require_file`，导致误触发 shutdown。
+- 修改 `scripts/run_readme_pipeline.sh`：`GENERATED_DOTA_HYPES` 的 `require_file` 检查仅在 `DRY_RUN=0` 时执行。
+- 复查 `.sh` 中其他 `require_glob/require_file`：运行产物检查均已位于 `DRY_RUN=0` 条件下；preflight 基础文件检查保留。
+- 验证：`git diff --check -- scripts/run_readme_pipeline.sh` 未发现空白错误。
+
+## 2026-06-07 12:03:58 +08:00
+- 用户提供服务器 `mbe_filter` 失败日志：Open3D 读取大量 `/root/autodl-tmp/opv2v/train/.../*.pcd` 失败，随后 `ConvexHull(inter_points_scale)` 因空点集报 `ValueError: No points given`。
+- 定位到 `opencood/tools/MBE.py` 的上游问题：`return_pl_frome_single_scenario()` 读取点云时使用了主进程循环末尾残留的全局 `timestamps`，导致不同 scenario 可能用错时间戳去读取不存在的 `.pcd`。
+- 修改 `opencood/tools/MBE.py`：每个 scenario 内部根据当前 scenario 的 yaml 文件生成 `scenario_timestamps`，并用它读取当前 scenario 的 `.pcd/.yaml`。
+- 增强 `MBE.py` 稳健性：缺失或空 `.pcd` 返回空点云并输出 warning；`remove_ground_points()`、`pc_2_world()` 和 `box_filter()` 增加空点云保护；`ConvexHull` 对少于 4 个点或 Qhull 失败时记为 0，避免崩溃。
+- 增强 `classify_state()`：对 ICE/MBE 中的比例计算增加除零保护，距离权重归一化时检查权重和。
+- 将 MBE 主流程的 scenario 列表从硬编码 `range(43)` 改为 `range(len(scenario_folders))`，与实际数据目录数量一致。
+- 修改 `scripts/run_readme_pipeline.sh`：在 `run_step()` 执行子命令期间显式关闭 `ERR` trap，并在恢复后按返回码进入 `step failed` 关机路径，避免普通步骤失败被误报为 `unexpected error`。
+- 验证：`python -m py_compile opencood/tools/MBE.py` 通过；`git diff --check -- opencood/tools/MBE.py scripts/run_readme_pipeline.sh` 未发现空白错误，仅有 Windows 工作区 LF/CRLF 提示。
+
+## 2026-06-07 12:06:40 +08:00
+- 用户要求提供命令检查流水线第 02 步生成的初始伪标签，抽样 200 个。
+- 提供服务器端 Python heredoc 检查命令：从 `/root/autodl-tmp/out_pseudo_lables/pre_box_test_full/pre_*.npy` 随机抽样，并检查对应 `/root/autodl-tmp/out_pseudo_lables/pre_score_test_full/score_*.npy` 是否存在、shape 是否匹配、是否包含 NaN/Inf、空标签比例和 score 分布。
+- 命令会将检查结果保存到 `/root/autodl-fs/DOtAv2/pipeline_logs/check_step02_labels_<timestamp>.log`。
+
+## 2026-06-07 12:08:00 +08:00
+- 用户反馈第 02 步伪标签抽样检查结果：`pre_box_test_full` 下共有 6374 个 `pre_*.npy`，随机抽样 200 个。
+- 抽样结果：总框数 13976，空标签文件 0，缺失 score 文件 0，shape 异常 0，NaN/Inf 异常 0。
+- score 分布：最小值约 0.0100006，最大值约 0.974636，均值约 0.03997，中位数约 0.01395，95 分位约 0.04738，99 分位约 0.85133。
+- 当前判断：第 02 步初始伪标签文件结构与数值完整性正常；score 大量集中在 0.01 附近，符合当前低阈值高召回伪标签生成设定。
+
+## 2026-06-07 12:09:45 +08:00
+- 用户询问如何在服务器上从上次断点继续训练。
+- 当前断点判断：第 02 步初始伪标签已生成并抽样检查正常，因此无需重新训练初始 detector，也无需重新运行初始伪标签生成；应在同步最新 `MBE.py` 与 `run_readme_pipeline.sh` 后，从第 03 步 `mbe_filter` 继续。
+- 建议续跑顺序：`MBE.py` 生成 MBE 筛选标签与点云/pose 缓存，`box_score_for_mbe.py` 生成带 score 伪标签，生成临时 DOTA YAML 指向 `/root/autodl-tmp/out_mbe/score`，最后单卡运行 `opencood/tools/train.py` 进行 DOTA 伪标签训练。

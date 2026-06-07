@@ -108,6 +108,7 @@ system_shutdown() {
 }
 
 fail_shutdown() {
+  trap - ERR
   local reason="$1"
   local rc="${2:-1}"
   log_summary "SHUTDOWN: $reason"
@@ -152,6 +153,7 @@ run_step() {
     return 0
   fi
 
+  trap - ERR
   set +e
   (
     cd "$REPO_ROOT"
@@ -159,6 +161,7 @@ run_step() {
   ) >> "$log_path" 2>&1
   local rc=$?
   set -e
+  trap on_unexpected_error ERR
   {
     echo
     echo "finished_at: $(date '+%Y-%m-%d %H:%M:%S')"
@@ -321,7 +324,9 @@ run_step 5 prepare_dota_hypes \
   "$RUN_DIR/generated_hypes/point_pillar_intermediate_fusion_dota.pipeline.yaml" \
   "$MBE_OUTPUT_DIR/score"
 GENERATED_DOTA_HYPES="$RUN_DIR/generated_hypes/point_pillar_intermediate_fusion_dota.pipeline.yaml"
-require_file "$GENERATED_DOTA_HYPES" "generated DOTA hypes yaml"
+if [[ "$DRY_RUN" -eq 0 ]]; then
+  require_file "$GENERATED_DOTA_HYPES" "generated DOTA hypes yaml"
+fi
 
 if [[ -z "$FINAL_CHECKPOINT_DIR" ]]; then
   run_step 6 train_with_pseudo_labels \
