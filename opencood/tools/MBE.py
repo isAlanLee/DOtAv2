@@ -12,7 +12,11 @@ from scipy.spatial import Delaunay
 from functools import partial
 import multiprocessing
 import math
-from scipy.spatial import ConvexHull, QhullError
+from scipy.spatial import ConvexHull
+try:
+    from scipy.spatial import QhullError
+except ImportError:
+    from scipy.spatial.qhull import QhullError
 
 
 def in_hull(p, hull):
