@@ -146,7 +146,10 @@ def compute_css(points, box):
     return final_score
 
 import time
-from viewer.viewer import Viewer
+try:
+    from viewer.viewer import Viewer
+except ImportError:
+    Viewer = None
 import os
 import open3d as o3d
 import numpy as np
@@ -503,7 +506,7 @@ def load_yaml(file, opt=None):
 
 if __name__ == '__main__':
 
-    vi = Viewer()
+    vi = Viewer() if Viewer is not None else None
 
     path = "/root/autodl-tmp/opv2v/train"
     mbe_output_dir = '/root/autodl-tmp/out_mbe'

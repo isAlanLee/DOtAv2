@@ -164,3 +164,10 @@
 - 修改 `opencood/tools/MBE.py`：`QhullError` 改为兼容导入，优先 `from scipy.spatial import QhullError`，失败时回退到老版本 SciPy 可用的 `from scipy.spatial.qhull import QhullError`。
 - 当前判断：`QhullError` 是 SciPy 版本兼容问题；`OMP_NUM_THREADS` 是服务器环境变量值非法，续跑前应执行 `unset OMP_NUM_THREADS` 或设置为合法整数如 `export OMP_NUM_THREADS=1`。
 - 验证：`python -m py_compile opencood/tools/MBE.py` 通过；`git diff --check -- opencood/tools/MBE.py codex.md` 未发现空白错误，仅有 Windows 工作区 LF/CRLF 提示；已清理编译产生的 `opencood/tools/__pycache__`。
+
+## 2026-06-07 18:23:33 +08:00
+- 用户反馈服务器运行 `opencood/tools/box_score_for_mbe.py` 报错：`ModuleNotFoundError: No module named 'viewer'`。
+- 检查 `box_score_for_mbe.py` 中 `Viewer` 使用情况：实际计算流程未使用 viewer，可视化调用均为注释代码，仅主入口初始化了 `vi = Viewer()`。
+- 修改 `opencood/tools/box_score_for_mbe.py`：将 `from viewer.viewer import Viewer` 改为可选导入，缺少 viewer 包时设置 `Viewer = None`，主入口使用 `vi = Viewer() if Viewer is not None else None`。
+- 当前判断：该修复不会改变 box score 计算逻辑，只避免服务器无可视化依赖时流程被阻断。
+- 验证：`python -m py_compile opencood/tools/box_score_for_mbe.py` 通过；`git diff --check -- opencood/tools/box_score_for_mbe.py codex.md` 未发现空白错误，仅有 Windows 工作区 LF/CRLF 提示；已清理编译产生的 `opencood/tools/__pycache__`。
