@@ -199,3 +199,10 @@
 - 修改 `opencood/tools/box_score_for_mbe.py`：新增 `safe_distance_score()`，对少于 3 个点、ConvexHull 失败、空 corner、非有限 mean 统一返回有限默认 score，并将保存的 score 数组强制为 `float32`，避免生成 NaN/Inf 或 object dtype。
 - 修改 `scripts/diagnose_dota_artifacts.py`：读取 checkpoint `config.yaml` 时若 `yaml.safe_load()` 遇到 numpy tag 报 `ConstructorError`，回退到 `yaml.Loader`，避免诊断在 Config Inspection 阶段中断。
 - 验证：`python -m py_compile opencood/tools/box_score_for_mbe.py scripts/diagnose_dota_artifacts.py` 通过；`git diff --check -- opencood/tools/box_score_for_mbe.py scripts/diagnose_dota_artifacts.py` 未发现空白错误，仅有 Windows 工作区 LF/CRLF 提示；已清理 `opencood/tools/__pycache__` 与 `scripts/__pycache__`。
+
+## 2026-06-08 17:14:22 +08:00
+- 用户重新运行诊断后确认：`score_bad: {}`，最终模型 `config.yaml` 正确设置 `iterative_training: True`、`pseudo_lable_path: /root/autodl-tmp/out_mbe/score`、`validate_dir: /root/autodl-tmp/opv2v/validate`，只剩高风险项 `MBE keeps very few boxes`。
+- 当前判断：AP 低的主要前置问题不是文件缺失、score NaN 或训练配置指向错误，而是 MBE 过滤过严，导致伪标签正样本严重稀疏。
+- 新增只读诊断脚本 `scripts/diagnose_mbe_thresholds.py`：抽样重算 MBE 的 `c1/c2`，并分别统计当前 inverse-distance 权重、旧 linear-distance 权重、uniform 权重下的 `pass_c1`、`pass_c2` 和最终 accepted 比例。
+- 该脚本用于判断 MBE 低保留率到底是 `c1 < phi_r`、`c2 > phi_o` 哪个条件卡住，以及 ICE 权重修正是否显著降低通过率。
+- 验证：`python -m py_compile scripts/diagnose_mbe_thresholds.py` 通过；`git diff --check -- scripts/diagnose_mbe_thresholds.py codex.md` 未发现空白错误；已清理 `scripts/__pycache__`。
