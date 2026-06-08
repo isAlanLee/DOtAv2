@@ -163,6 +163,29 @@ from scipy.spatial import Delaunay
 
 import math
 
+def safe_distance_score(points, pl, default_score=1.0):
+    if points.shape[0] < 3:
+        return default_score
+
+    try:
+        corner_points = points[ConvexHull(points).vertices]
+    except Exception:
+        corner_points = points
+
+    if corner_points.shape[0] == 0:
+        return default_score
+
+    three_D_corner_points = np.zeros((corner_points.shape[0], 3))
+    three_D_corner_points[:, :2] = corner_points
+    distance_score = get_distance_score(torch.tensor(three_D_corner_points),
+                                        torch.tensor(pl))
+    final_score = distance_score.mean()
+    if hasattr(final_score, "item"):
+        final_score = final_score.item()
+    if not np.isfinite(final_score):
+        return default_score
+    return float(final_score)
+
 def in_hull(p, hull):
     """
     :param p: (N, K) test points
@@ -609,16 +632,10 @@ if __name__ == '__main__':
                 pl = np.array(pseduo_labels[i]).reshape(1, 7)
 
                 points = forground_instance_points[:, [0, 1]]
-                # new_points = np.array([points[:, 1], points[:, 0]]).T
-                corner_points = points[ConvexHull(points).vertices]
-                three_D_corner_points = np.zeros((corner_points.shape[0], 3))
-                three_D_corner_points[:, :2] = corner_points
-
-                distance_score = get_distance_score(torch.tensor(three_D_corner_points), torch.tensor(pl))
-                final_score = distance_score.mean()
+                final_score = safe_distance_score(points, pl)
                 total_score.append(final_score)
 
-            total_score = np.array(total_score)
+            total_score = np.array(total_score, dtype=np.float32)
             pseduo_labels_with_score = np.hstack((pseduo_labels_, total_score.reshape(-1, 1)))
             np.save(os.path.join(score_output_dir, f'out_pseduo_labels_with_score_v4_{num_timestamp}.npy'), pseduo_labels_with_score)
 
@@ -631,20 +648,10 @@ if __name__ == '__main__':
                 pl = np.array(pseduo_labels_error[i]).reshape(1, 7)
 
                 points = forground_instance_points[:, [0, 1]]
-
-                # new_points = np.array([points[:, 1], points[:, 0]]).T
-                try:
-                    corner_points = points[ConvexHull(points).vertices]
-                except:
-                    corner_points = points
-                three_D_corner_points = np.zeros((corner_points.shape[0], 3))
-                three_D_corner_points[:, :2] = corner_points
-
-                distance_score = get_distance_score(torch.tensor(three_D_corner_points), torch.tensor(pl))
-                final_score = distance_score.mean()
+                final_score = safe_distance_score(points, pl)
                 total_score_error.append(final_score)
 
-            total_score_error = np.array(total_score_error)
+            total_score_error = np.array(total_score_error, dtype=np.float32)
             pseduo_labels_noise_with_score = np.hstack((pseduo_labels_error_, total_score_error.reshape(-1, 1)))
             np.save(os.path.join(score_output_dir, f'out_pseduo_labels_noise_with_score_v4_{num_timestamp}.npy'), pseduo_labels_noise_with_score)
 

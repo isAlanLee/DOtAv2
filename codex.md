@@ -190,3 +190,12 @@
 ## 2026-06-08 16:51:28 +08:00
 - 用户确认最终模型目录为 `point_pillar_intermediate_fusion_2026_06_07_19_38_34`。
 - 后续诊断命令应将 `--final-model-dir` 指向 `/root/autodl-fs/DOtAv2/opencood/logs/point_pillar_intermediate_fusion_2026_06_07_19_38_34`，用于检查该 checkpoint 的 `config.yaml` 是否使用了正确的 `iterative_training`、`pseudo_lable_path`、`validate_dir` 和后处理阈值。
+
+## 2026-06-08 16:57:04 +08:00
+- 用户粘贴 `diagnose_dota_artifacts.py` 输出：Step02、MBE、MBE score 文件数量均为 6374，数据集从 first cav yaml 统计帧数也是 6374，且缺失 `.pcd` 数为 0，说明当前文件数量、索引和点云数据完整性基本正常。
+- 诊断关键异常 1：MBE 在抽样 1000 帧中只保留 1652 个正伪标签，平均每帧 1.65 个，中位保留率约 2.3%，108/1000 帧没有任何正伪标签；这会导致后续 DOTA 伪标签训练正样本极少，是 AP 极低的首要疑点。
+- 诊断关键异常 2：`score_bad: {'neg_nonfinite': 1000}`，说明所有抽样的 rejected/noise scored 文件都存在 NaN/Inf，来源是 `box_score_for_mbe.py` 对空点集或退化点集求 `distance_score.mean()`。
+- 诊断补充：初始伪标签和 MBE accepted 伪标签尺寸列都显示为 lwh-like，训练数据集在 `iterative_training` 时交换第 3/5 列后转成 hwl，与 YAML `postprocess.order: hwl` 的链路一致，暂不判为尺寸格式错误。
+- 修改 `opencood/tools/box_score_for_mbe.py`：新增 `safe_distance_score()`，对少于 3 个点、ConvexHull 失败、空 corner、非有限 mean 统一返回有限默认 score，并将保存的 score 数组强制为 `float32`，避免生成 NaN/Inf 或 object dtype。
+- 修改 `scripts/diagnose_dota_artifacts.py`：读取 checkpoint `config.yaml` 时若 `yaml.safe_load()` 遇到 numpy tag 报 `ConstructorError`，回退到 `yaml.Loader`，避免诊断在 Config Inspection 阶段中断。
+- 验证：`python -m py_compile opencood/tools/box_score_for_mbe.py scripts/diagnose_dota_artifacts.py` 通过；`git diff --check -- opencood/tools/box_score_for_mbe.py scripts/diagnose_dota_artifacts.py` 未发现空白错误，仅有 Windows 工作区 LF/CRLF 提示；已清理 `opencood/tools/__pycache__` 与 `scripts/__pycache__`。

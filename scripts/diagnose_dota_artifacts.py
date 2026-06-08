@@ -116,7 +116,11 @@ def inspect_yaml(path):
         print(f"missing yaml: {path}")
         return
     with open(path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+        try:
+            data = yaml.safe_load(f)
+        except yaml.constructor.ConstructorError:
+            f.seek(0)
+            data = yaml.load(f, Loader=yaml.Loader)
     print(f"yaml: {path}")
     for key in ("root_dir", "validate_dir", "lable_free",
                 "iterative_training", "pseudo_lable_path"):
