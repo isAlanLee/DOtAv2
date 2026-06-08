@@ -264,3 +264,9 @@
 - 脚本会强制使用完整 GT 逻辑：加载 hypes 后设置 `lable_free=False`、`iterative_training=False`，并按 `--split train/validate` 设置 `validate_dir`。
 - 当前目的：判断低阈值 0.01 下初始伪标签是否具备足够 recall。如果 recall 尚可，则主要调 MBE；如果 recall 很低，则需要回头改 label-free 初训或初始伪标签生成。
 - 验证：`python -m py_compile scripts/diagnose_pseudo_recall.py` 通过；`git diff --check -- scripts/diagnose_pseudo_recall.py codex.md` 未发现空白错误，仅有 Windows 工作区 LF/CRLF 提示；已清理 `scripts/__pycache__`。
+
+## 2026-06-08 19:07:35 +08:00
+- 用户运行 `scripts/diagnose_pseudo_recall.py` 报 `KeyError: 'transformation_matrix'`，原因是脚本直接将 `dataset[idx]` 传给 `generate_gt_bbx()`；该函数需要的是 `collate_batch_test()` 后包含 `transformation_matrix` 的 batch 数据结构。
+- 修改 `scripts/diagnose_pseudo_recall.py`：GT 获取改为 `data_dict = dataset.collate_batch_test([dataset[idx]])` 后再调用 `dataset.post_processor.generate_gt_bbx(data_dict)`，与 inference 流程保持一致。
+- 同时为诊断循环加入 `tqdm` 进度条，便于服务器运行时观察进度。
+- 验证：`python -m py_compile scripts/diagnose_pseudo_recall.py` 通过；`git diff --check -- scripts/diagnose_pseudo_recall.py codex.md` 未发现空白错误，仅有 Windows 工作区 LF/CRLF 提示；已清理 `scripts/__pycache__`。

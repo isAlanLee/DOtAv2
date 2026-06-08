@@ -4,6 +4,7 @@ import os
 
 import numpy as np
 import torch
+from tqdm import tqdm
 
 from opencood.data_utils.datasets import build_dataset
 from opencood.hypes_yaml import yaml_utils
@@ -78,14 +79,14 @@ def main():
     print(f"pseudo_root: {args.pseudo_root}")
     print(f"thresholds: {thresholds}")
 
-    for idx in indices:
+    for idx in tqdm(indices):
         box_path = os.path.join(box_dir, f"pre_{idx}.npy")
         score_path = os.path.join(score_dir, f"score_{idx}.npy")
         if not os.path.exists(box_path) or not os.path.exists(score_path):
             missing += 1
             continue
 
-        data_dict = dataset[idx]
+        data_dict = dataset.collate_batch_test([dataset[idx]])
         gt_box_tensor = dataset.post_processor.generate_gt_bbx(data_dict)
         gt_counts.append(int(gt_box_tensor.shape[0]))
 
