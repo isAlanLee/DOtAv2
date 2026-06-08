@@ -286,3 +286,37 @@
 - 修改 `opencood/tools/MBE.py`：默认距离权重恢复为 DOtA 论文式 inverse-square distance；新增环境变量 `DOTA_MBE_DISTANCE_WEIGHT` 支持 `inverse_square`、`linear`、`uniform`，便于复现实验但默认对齐论文。
 - 同时新增环境变量 `DOTA_MBE_PHI_R` 与 `DOTA_MBE_PHI_O`，默认仍为论文阈值 `0.1/0.7`，便于服务器上直接做 `phi_o` 放宽消融而无需反复改源码。
 - 验证：`python -m py_compile opencood/tools/MBE.py` 通过；`git diff --check -- opencood/tools/MBE.py codex.md` 未发现空白错误，仅有 Windows 工作区 LF/CRLF 提示；已清理 `opencood/tools/__pycache__`。
+
+## 2026-06-08 19:30:32 +08:00
+- 用户担心放宽 `phi_o` 会偏离论文，以及低 AP 是否仍可能来自 label-free 阶段训练代码问题。
+- 复查代码链路：`intermediate_fusion_dataset.py` 在 `iterative_training=True` 时读取 MBE score 伪标签替换 `object_stack`；在 label-free 初始训练阶段则由 `generate_object_center_lable_free()` 生成免费标签。
+- 复查 `base_postprocessor.py`：`generate_object_center_lable_free()` 从 `vehicles` 中取对象，并调用 `project_world_objects_lable_free()` 按 `selected_cav_id` 筛选免费标签，符合只用 agent 自身车辆/可获得对象作为稀疏免费监督的思路。
+- 当前结论：放宽 `phi_o` 会偏离论文默认 `0.7`，因此只能作为消融排查或工程补救，不能作为严格论文对齐结果；但现有数据更直接支持 MBE 过滤导致召回坍缩，而不是 label-free 分支代码明显错误。
+
+## 2026-06-08 19:34:05 +08:00
+- 用户要求进一步检查代码具体逻辑是否存在问题。
+- 复查 Step02 到 DOTA 训练的框格式链路：`inference.py` 用 `corner_to_center()` 保存 ego 坐标 `lwh`；`MBE.py` 临时转 world 坐标做几何过滤，但保存回原始 ego/lwh；`intermediate_fusion_dataset.py` 迭代训练读取后交换第 3/5 列转成 `hwl`，与 `voxel_postprocessor.py` 的 `order: hwl` 要求一致。
+- 复查索引链路：`BaseDataset` 与 `MBE.py` 都按 scenario 顺序和每个 scenario 的时间戳累计形成全局 idx；当前文件数量诊断也验证 6374 帧一致，因此暂未发现 idx 对齐错误。
+- 发现主要逻辑风险：`MBE.py` 的 `c2 > phi_o` 依赖 ConvexHull 顶点数变化；稀疏点、少于 4 点或退化点会被保护为 0，从代码行为上会让 `c2` 很难超过 0.7，这与服务器诊断 `pass_c2_only` 很低一致。
+- 发现 DOTA 训练阶段次要风险：`point_pillar_intermediate.py` 的 LICL negative 只使用 score 在 `(0.2, 0.8)` 的 noise 框，而此前 noise score 大量为 1.0，会导致很多 rejected 框不参与 contrastive loss。
+- 发现稳健性风险：`intermediate_fusion_dataset.py` 迭代训练读取伪标签后未显式裁剪到 `max_num`/`max_num*10`；当前 MBE 太少不会触发，但放宽 MBE 后可能写入数组时报 shape/broadcast 错误。
+
+## 2026-06-08 19:37:15 +08:00
+- 用户询问 MBE 中 ConvexHull 少点/退化记为 0 是否是原始仓库逻辑，还是修改后导致。
+- 对比本地历史提交 `6331c87`：原先已经使用 `convex_hull_number_total` 计算 `score_0/c2`，并使用 `if c1 < 0.1 and c2 > 0.7` 判别 accepted；原先也直接调用 `ConvexHull(inter_points_scale).vertices` 统计顶点数。
+- 当前修改与原先差异：我们增加了空点、少于 4 点、QhullError/ValueError 的保护，将原本会导致脚本崩溃的情况记为 `convex_hull_count=0`；这不是新增 MBE 判别公式，而是运行稳健性处理。
+- 补充发现：更早提交 `d431286` 中 `score_0` 公式疑似错误，最后使用了 `score_r_1/score_r_2`，会使 `c2` 基本跟 `c1` 同源，和 `c1<0.1 && c2>0.7` 判别相冲突；后续 `6331c87` 已改为 ConvexHull 版本。
+
+## 2026-06-08 19:43:53 +08:00
+- 用户询问为什么当前结果与论文结果差距很大。
+- 复查 README：官方流程只描述初始 label-free detector 训练、初始伪标签生成、MBE、box score、DOTA 训练和测试，没有给出可直接校验的中间质量门槛、checkpoint 或每阶段 recall/AP 目标。
+- 复查当前 YAML：label-free 与 DOTA 配置均为 `epoches: 15`、`batch_size: 2`、`lr: 0.002`；label-free 用 `score_threshold: 0.01`，DOTA 用 `score_threshold: 0.20`。
+- 当前差距的直接数值链路：初始 label-free detector 在完整 GT 上 AP 约 0.13；Step02 低阈值伪标签 IoU 0.5 recall 约 0.346；MBE accepted 后 IoU 0.5 recall 仅约 0.057，最终模型 AP 约 0.10。
+- 当前判断：论文差距主要不是最终推理阈值单点问题，而是中间伪标签质量链路没有达到论文所需水平；尤其 MBE 后正伪标签召回过低，会导致 DOTA 训练几乎没有足够正样本。
+
+## 2026-06-08 20:17:53 +08:00
+- 用户使用论文式 `DOTA_MBE_DISTANCE_WEIGHT=inverse_square`、`DOTA_MBE_PHI_R=0.1`、`DOTA_MBE_PHI_O=0.7` 在服务器重跑 `MBE.py`，全量 43 个 scenario 完成，耗时约 39 分钟。
+- 随后用 `scripts/diagnose_label_recall.py --source mbe` 抽样 250 帧评估：MBE accepted 平均 1.74 个框/帧，中位数 2，空帧 21/250。
+- 论文式 inverse-square MBE 的 recall/AP 相比 linear 有提升：IoU 0.5 recall 从约 0.0574 提升到约 0.0937，AP 从约 0.0573 提升到约 0.0862；但仍显著低于 Step02 `score>=0.01` 的 IoU 0.5 recall 0.3460。
+- 新增 `scripts/diagnose_mbe_threshold_recall.py`：不改写 MBE 输出文件，在抽样帧上重算不同 `phi_r/phi_o` 下的 MBE accepted，并直接计算相对完整 GT 的 recall/AP，用于判断阈值消融是否值得全量重跑。
+- 验证：`python -m py_compile scripts/diagnose_mbe_threshold_recall.py` 通过；`git diff --check -- scripts/diagnose_mbe_threshold_recall.py codex.md` 未发现空白错误，仅有 Windows 工作区 LF/CRLF 提示；已清理 `scripts/__pycache__`。
