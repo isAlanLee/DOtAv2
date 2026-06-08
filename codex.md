@@ -270,3 +270,11 @@
 - 修改 `scripts/diagnose_pseudo_recall.py`：GT 获取改为 `data_dict = dataset.collate_batch_test([dataset[idx]])` 后再调用 `dataset.post_processor.generate_gt_bbx(data_dict)`，与 inference 流程保持一致。
 - 同时为诊断循环加入 `tqdm` 进度条，便于服务器运行时观察进度。
 - 验证：`python -m py_compile scripts/diagnose_pseudo_recall.py` 通过；`git diff --check -- scripts/diagnose_pseudo_recall.py codex.md` 未发现空白错误，仅有 Windows 工作区 LF/CRLF 提示；已清理 `scripts/__pycache__`。
+
+## 2026-06-08 19:16:25 +08:00
+- 用户提供修复后 `diagnose_pseudo_recall.py` 的输出：Step02 初始伪标签在 train split 抽样 250 帧，完整 GT 平均约 16.99 个/帧。
+- 初始伪标签 `score >= 0.01` 时平均约 74.67 个候选/帧，IoU 0.3/0.5/0.7 recall 分别约 0.4098/0.3460/0.2187，AP 分别约 0.2244/0.2008/0.1613。
+- 随 score 阈值升高，候选数量和召回快速下降：`score >= 0.2` 时平均约 2.35 个候选/帧，recall 仅约 0.136，说明低阈值高召回候选对 DOtA 流程是必要的。
+- 当前判断：Step02 的低阈值候选并非完全无效，但召回仍有限；结合此前 MBE 每帧仅保留约 1 个 accepted 的诊断，AP 低的主要风险仍是 MBE 将本就有限的可用召回进一步大幅压缩。
+- 新增 `scripts/diagnose_label_recall.py`，用于统一评估 `pseudo`、`mbe`、`mbe-score` 三类保存标签相对完整 GT 的 recall/AP，从而直接比较 MBE 前后召回变化。
+- 验证：`python -m py_compile scripts/diagnose_label_recall.py` 通过；`git diff --check -- scripts/diagnose_label_recall.py` 未发现空白错误；已清理 `scripts/__pycache__`。
