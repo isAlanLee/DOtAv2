@@ -221,3 +221,46 @@
 - 保留此前添加的稳定性保护：`safe_ratio()` 除零保护、空点云保护、ConvexHull 失败保护、scenario 局部时间戳读取和动态 scenario 数量。
 - 当前预期：重新运行 `MBE.py` 后会覆盖 `/root/autodl-tmp/out_mbe/out_pseduo_labels*_v1_*.npy` 和点云/pose 缓存，再运行 `box_score_for_mbe.py` 重新生成 `/root/autodl-tmp/out_mbe/score`，随后需要重新训练 DOTA 模型。
 - 验证：`python -m py_compile opencood/tools/MBE.py` 通过；`git diff --check -- opencood/tools/MBE.py codex.md` 未发现空白错误，仅有 Windows 工作区 LF/CRLF 提示；已清理 `opencood/tools/__pycache__`。
+
+## 2026-06-08 18:06:04 +08:00
+- 用户在服务器用原始 linear 距离权重重新运行 `opencood/tools/MBE.py`，耗时约 40 分钟完成。
+- 随后运行 `diagnose_dota_artifacts.py`：新的 MBE accepted 抽样 1000 帧仅 940 个，平均每帧 0.94 个，433/1000 帧 accepted 为空，保留率中位数约 1.15%，比 inverse 权重时的 1652 个、平均 1.65 个更差。
+- 诊断输出同时显示 `scored_accepted_counts` 仍为 1652，说明用户重新运行 MBE 后尚未重新运行 `box_score_for_mbe.py`，因此 `/root/autodl-tmp/out_mbe/score` 仍是旧 score 产物，与新的 MBE 输出不一致。
+- 当前判断：回退原始 linear 距离权重不会改善 AP 低的问题，反而进一步降低 MBE 正伪标签数量；若继续以该 MBE 输出训练，必须先重新运行 `box_score_for_mbe.py`，但更建议调整 `phi_o/c2` 过滤强度。
+
+## 2026-06-08 18:12:29 +08:00
+- 用户询问当前是否与 DOtA 论文对齐，以及 AP 低是否可能由 label-free 训练阶段出问题导致。
+- 核对 `point_pillar_intermediate_fusion_lable_free.yaml`：`lable_free: True`、`iterative_training: False`、`score_threshold: 0.01`、`validate_dir: /root/autodl-tmp/opv2v/train`，符合用于在 train split 上生成高召回初始伪标签的设置。
+- 核对 label-free 数据集逻辑：`generate_object_center_lable_free()` 调用 `project_world_objects_lable_free()`，后者只保留 `object_id` 属于当前 CAV ID 的车辆框，即用每个 agent 自身车辆作为免费标签，符合 DOtA 的 label-free 初始训练思路。
+- 核对 DOTA 阶段：最终模型 config 已由服务器诊断确认 `iterative_training: True`、`pseudo_lable_path: /root/autodl-tmp/out_mbe/score`、`validate_dir: /root/autodl-tmp/opv2v/validate`。
+- 当前差异：MBE 的 `phi_r=0.1`、`phi_o=0.7` 与论文一致；但用户要求将 `score_d` 改回原始仓库的线性距离归一化后，ICE 距离权重不再与论文公式的 inverse-distance/inverse-square-distance 描述完全一致，而是与原始仓库实现一致。
+- 当前判断：已有诊断更支持“MBE 过滤过严导致正伪标签稀疏”而非 label-free 分支结构错误；但仍建议单独评估初始 label-free detector 在 validate split 上的 AP，以确认第一阶段模型质量是否过低。
+
+## 2026-06-08 18:16:48 +08:00
+- 用户检查初始 label-free checkpoint `point_pillar_intermediate_fusion_2026_06_06_22_11_36/config.yaml`：确认 `lable_free: true`、`iterative_training: false`、`root_dir/validate_dir` 均为 train、`score_threshold: 0.01`。
+- 用户尝试复制 checkpoint 并用 Python `yaml.safe_dump()` 修改临时 config 为 validate split 时失败，错误为 `RepresenterError: cannot represent an object`，原因是 checkpoint config 中包含 numpy 对象 tag，`safe_dump` 无法重新序列化。
+- 注意：失败发生在 `open(path, "w")` 之后，临时目录 `/root/autodl-fs/DOtAv2/tmp_eval_initial_label_free/config.yaml` 可能已被截断或写坏，后续必须先删除并重新从原始 `INIT_DIR` 复制。
+- 新建议：不要 parse/dump 整个 YAML；对临时 config 使用文本替换修改 `validate_dir` 和唯一的 `score_threshold` 行，避免破坏 numpy tag。
+
+## 2026-06-08 18:33:19 +08:00
+- 用户按文本替换方式成功创建初始 label-free 模型的临时 eval config：`lable_free: true`、`iterative_training: false`、`validate_dir: /root/autodl-tmp/opv2v/validate`、`score_threshold: 0.2`。
+- 用户运行初始 label-free checkpoint `point_pillar_intermediate_fusion_2026_06_06_22_11_36` 在 validate split 上的 inference：1980 samples，加载 epoch 15。
+- 初始 label-free 模型 AP：IoU 0.3 为 0.13，IoU 0.5 为 0.12，IoU 0.7 为 0.11。
+- 当前判断：第一阶段 label-free detector 本身 AP 已明显偏低，仅略高于最终 DOTA 模型的 0.10/0.10/0.09；后续 AP 低不是单纯最终推理配置错误，而是初始模型质量偏低与 MBE 过滤过严共同导致。
+
+## 2026-06-08 18:34:19 +08:00
+- 用户询问接下来如何排查。
+- 排查优先级确定为：先评估初始 label-free 模型在 train split 上的 AP，判断是否训练集也没学起来；再检查初始训练日志和 loss 是否正常下降；最后再基于 MBE threshold sweep 调整 `phi_o/c2`，避免在初始模型质量不明时盲目重训 DOTA 阶段。
+
+## 2026-06-08 18:58:58 +08:00
+- 用户上传初始 label-free 训练日志并反馈初始模型在 train split 上 AP 为 IoU 0.3/0.5/0.7 均约 0.13。
+- 训练日志显示初始训练完整跑到 epoch 14/15，return code 为 0；loss 从初始极高值下降到末尾接近 0，未见训练崩溃迹象。
+- 当前解释：label-free 初始训练只使用当前 CAV/自车相关免费标签，不使用完整场景 GT，因此在用完整 GT 评估时 AP 低是可能且符合预期的；其训练目标本身稀疏且会把大量未标注真实车辆当作背景。
+- 当前判断：不能仅凭 AP@0.2 低判定 label-free 分支代码错误；还需要检查低阈值 `score_threshold=0.01` 生成的初始伪标签召回/覆盖率，以及 MBE 是否过度过滤这些低置信候选。
+
+## 2026-06-08 19:02:39 +08:00
+- 进一步查看初始训练日志：训练确实跑满 15 个 epoch，最后 epoch 14 的 batch loss 多数已接近 0，说明优化过程没有明显失败；但 train/validate AP 均约 0.13，符合 label-free 稀疏监督导致完整 GT AP 偏低的可能。
+- 新增只读诊断脚本 `scripts/diagnose_pseudo_recall.py`，用于将 Step02 初始伪标签 `/root/autodl-tmp/out_pseudo_lables/pre_box_test_full/pre_*.npy` 与完整 GT 对齐，统计不同 score 阈值下的预测数量、GT recall 和 AP。
+- 脚本会强制使用完整 GT 逻辑：加载 hypes 后设置 `lable_free=False`、`iterative_training=False`，并按 `--split train/validate` 设置 `validate_dir`。
+- 当前目的：判断低阈值 0.01 下初始伪标签是否具备足够 recall。如果 recall 尚可，则主要调 MBE；如果 recall 很低，则需要回头改 label-free 初训或初始伪标签生成。
+- 验证：`python -m py_compile scripts/diagnose_pseudo_recall.py` 通过；`git diff --check -- scripts/diagnose_pseudo_recall.py codex.md` 未发现空白错误，仅有 Windows 工作区 LF/CRLF 提示；已清理 `scripts/__pycache__`。
