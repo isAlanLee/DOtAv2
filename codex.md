@@ -179,3 +179,14 @@
 - 脚本默认单卡运行：`CUDA_VISIBLE_DEVICES=0`，不使用分布式训练参数；并设置 `OMP_NUM_THREADS=1`、`MKL_NUM_THREADS=1`、`OPENBLAS_NUM_THREADS=1`。
 - 脚本默认失败后执行 `shutdown -h now`，支持 `--no-system-shutdown`、`--dry-run`、`--skip-test`、`--final-checkpoint-dir` 等参数。
 - 验证：`git diff --check -- scripts/resume_from_mbe_score.sh` 未发现空白错误；`rg` 检查确认脚本包含路径、单卡、shutdown、打分、训练、测试和产物检查逻辑。
+
+## 2026-06-08 16:49:04 +08:00
+- 用户反馈最终 AP 极低：IoU 0.3/0.5 约 0.10，IoU 0.7 约 0.09，要求排查前面步骤。
+- 初步代码排查：`inference.py` 保存初始伪标签时 `corner_to_center()` 默认输出 `lwh`，DOTA YAML 的 `postprocess.order` 为 `hwl`，训练集 `intermediate_fusion_dataset.py` 在迭代训练时交换第 3 和第 5 列，将 `lwh` 转为 `hwl`，该链路本身是有意匹配配置。
+- 发现高风险排查方向：需要确认 MBE 保留比例、MBE score 输出数量、score 权重分布、带 score 伪标签 dtype/shape、最终 checkpoint 的 `config.yaml` 是否真的指向 `/root/autodl-tmp/out_mbe/score`。
+- 新增服务器诊断脚本 `scripts/diagnose_dota_artifacts.py`，用于读取现有产物并输出 Step02、MBE、MBE score、数据集索引、伪标签尺寸和最终配置的健康检查结果。
+- 验证：`python -m py_compile scripts/diagnose_dota_artifacts.py` 通过；`git diff --check -- scripts/diagnose_dota_artifacts.py` 未发现空白错误；已清理 `scripts/__pycache__`。
+
+## 2026-06-08 16:51:28 +08:00
+- 用户确认最终模型目录为 `point_pillar_intermediate_fusion_2026_06_07_19_38_34`。
+- 后续诊断命令应将 `--final-model-dir` 指向 `/root/autodl-fs/DOtAv2/opencood/logs/point_pillar_intermediate_fusion_2026_06_07_19_38_34`，用于检查该 checkpoint 的 `config.yaml` 是否使用了正确的 `iterative_training`、`pseudo_lable_path`、`validate_dir` 和后处理阈值。
