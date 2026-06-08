@@ -272,9 +272,9 @@ def main():
     print(f"phi_o: {args.phi_o}")
 
     mode_stats = {
-        "inverse": {"accepted": 0, "c1": [], "c2": [], "pass_c1": 0, "pass_c2": 0},
-        "linear": {"accepted": 0, "c1": [], "c2": [], "pass_c1": 0, "pass_c2": 0},
-        "uniform": {"accepted": 0, "c1": [], "c2": [], "pass_c1": 0, "pass_c2": 0},
+        "inverse": {"accepted": 0, "c1": [], "c2": [], "pass_c1": 0, "pass_c2": 0, "pairs": []},
+        "linear": {"accepted": 0, "c1": [], "c2": [], "pass_c1": 0, "pass_c2": 0, "pairs": []},
+        "uniform": {"accepted": 0, "c1": [], "c2": [], "pass_c1": 0, "pass_c2": 0, "pairs": []},
     }
     score_seen = []
     score_by_inverse_accept = {"accepted": [], "rejected": []}
@@ -328,6 +328,7 @@ def main():
                                        distances, mode)
                 mode_stats[mode]["c1"].append(c1)
                 mode_stats[mode]["c2"].append(c2)
+                mode_stats[mode]["pairs"].append((c1, c2))
                 if c1 < args.phi_r:
                     mode_stats[mode]["pass_c1"] += 1
                 if c2 > args.phi_o:
@@ -357,6 +358,18 @@ def main():
               f"({stats['pass_c2'] / max(boxes_seen, 1):.6f})")
         pct("c1_percentiles", stats["c1"])
         pct("c2_percentiles", stats["c2"])
+        print("threshold_sweep_accept_ratio:")
+        pairs = np.asarray(stats["pairs"], dtype=np.float64)
+        phi_r_values = [0.05, 0.1, 0.2, 0.3, 0.5]
+        phi_o_values = [0.3, 0.4, 0.5, 0.6, 0.7]
+        header = "phi_r\\phi_o " + " ".join([f"{x:>8.2f}" for x in phi_o_values])
+        print(header)
+        for phi_r in phi_r_values:
+            row = [f"{phi_r:>10.2f}"]
+            for phi_o in phi_o_values:
+                keep = np.logical_and(pairs[:, 0] < phi_r, pairs[:, 1] > phi_o)
+                row.append(f"{float(np.mean(keep)):>8.4f}")
+            print(" ".join(row))
 
     print()
     pct("pre_score_inverse_accepted", score_by_inverse_accept["accepted"])

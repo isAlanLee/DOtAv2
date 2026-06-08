@@ -206,3 +206,11 @@
 - 新增只读诊断脚本 `scripts/diagnose_mbe_thresholds.py`：抽样重算 MBE 的 `c1/c2`，并分别统计当前 inverse-distance 权重、旧 linear-distance 权重、uniform 权重下的 `pass_c1`、`pass_c2` 和最终 accepted 比例。
 - 该脚本用于判断 MBE 低保留率到底是 `c1 < phi_r`、`c2 > phi_o` 哪个条件卡住，以及 ICE 权重修正是否显著降低通过率。
 - 验证：`python -m py_compile scripts/diagnose_mbe_thresholds.py` 通过；`git diff --check -- scripts/diagnose_mbe_thresholds.py codex.md` 未发现空白错误；已清理 `scripts/__pycache__`。
+
+## 2026-06-08 17:19:38 +08:00
+- 用户提供 `diagnose_mbe_thresholds.py` 输出：当前 inverse 权重下 accepted 为 103/4602，约 2.24%，与已保存 MBE accepted 比例一致。
+- 诊断显示 `pass_c1_only` 为 2599/4602，约 56.5%；`pass_c2_only` 仅 170/4602，约 3.7%，因此低保留率主要由 `c2 > 0.7` 条件卡住，而不是 `c1 < 0.1`。
+- 对比权重：inverse accepted 2.24%，linear 1.69%，uniform 1.52%；当前论文式 inverse-distance 权重反而保留更多框，因此 ICE 权重修改不是 AP 低的主因。
+- `pre_score_inverse_accepted` 中位数约 0.693，而 rejected 中位数约 0.0138，说明 MBE 主要保留高置信度候选，低置信候选几乎全部被滤掉，高召回伪标签没有转化为足够训练正样本。
+- 增强 `scripts/diagnose_mbe_thresholds.py`：新增 `threshold_sweep_accept_ratio` 网格输出，用于估计不同 `phi_r/phi_o` 下的 accepted 比例，便于后续选择是否降低 `phi_o` 或调整 MBE 逻辑。
+- 验证：`python -m py_compile scripts/diagnose_mbe_thresholds.py` 通过；`git diff --check -- scripts/diagnose_mbe_thresholds.py codex.md` 未发现空白错误，仅有 Windows 工作区 LF/CRLF 提示；已清理 `scripts/__pycache__`。
