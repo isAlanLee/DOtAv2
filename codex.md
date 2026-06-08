@@ -214,3 +214,10 @@
 - `pre_score_inverse_accepted` 中位数约 0.693，而 rejected 中位数约 0.0138，说明 MBE 主要保留高置信度候选，低置信候选几乎全部被滤掉，高召回伪标签没有转化为足够训练正样本。
 - 增强 `scripts/diagnose_mbe_thresholds.py`：新增 `threshold_sweep_accept_ratio` 网格输出，用于估计不同 `phi_r/phi_o` 下的 accepted 比例，便于后续选择是否降低 `phi_o` 或调整 MBE 逻辑。
 - 验证：`python -m py_compile scripts/diagnose_mbe_thresholds.py` 通过；`git diff --check -- scripts/diagnose_mbe_thresholds.py codex.md` 未发现空白错误，仅有 Windows 工作区 LF/CRLF 提示；已清理 `scripts/__pycache__`。
+
+## 2026-06-08 17:21:18 +08:00
+- 用户要求将 MBE 的距离权重改回原始仓库实现 `score_d = distance_total[i] / sum(distance_total)` 进行对比实验。
+- 修改 `opencood/tools/MBE.py`：`classify_state()` 中的距离权重从论文式 inverse squared distance 恢复为线性距离归一化，即 `distance_weight = distance_total` 后除以 `np.sum(distance_weight)`。
+- 保留此前添加的稳定性保护：`safe_ratio()` 除零保护、空点云保护、ConvexHull 失败保护、scenario 局部时间戳读取和动态 scenario 数量。
+- 当前预期：重新运行 `MBE.py` 后会覆盖 `/root/autodl-tmp/out_mbe/out_pseduo_labels*_v1_*.npy` 和点云/pose 缓存，再运行 `box_score_for_mbe.py` 重新生成 `/root/autodl-tmp/out_mbe/score`，随后需要重新训练 DOTA 模型。
+- 验证：`python -m py_compile opencood/tools/MBE.py` 通过；`git diff --check -- opencood/tools/MBE.py codex.md` 未发现空白错误，仅有 Windows 工作区 LF/CRLF 提示；已清理 `opencood/tools/__pycache__`。

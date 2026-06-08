@@ -137,7 +137,7 @@ def classify_state(inter_points_number_total, convex_hull_number_total, distance
     c2 = 0
 
     distance_total = np.asarray(distance_total, dtype=np.float64)
-    distance_weight = 1.0 / np.maximum(distance_total ** 2, 1e-6)
+    distance_weight = distance_total
     weight_sum = np.sum(distance_weight)
     if weight_sum <= 0:
         return 0
