@@ -19,6 +19,12 @@ except ImportError:
     from scipy.spatial.qhull import QhullError
 
 
+MBE_PHI_R = float(os.environ.get("DOTA_MBE_PHI_R", "0.1"))
+MBE_PHI_O = float(os.environ.get("DOTA_MBE_PHI_O", "0.7"))
+MBE_DISTANCE_WEIGHT = os.environ.get(
+    "DOTA_MBE_DISTANCE_WEIGHT", "inverse_square").strip().lower()
+
+
 def in_hull(p, hull):
     """
     :param p: (N, K) test points
@@ -137,7 +143,12 @@ def classify_state(inter_points_number_total, convex_hull_number_total, distance
     c2 = 0
 
     distance_total = np.asarray(distance_total, dtype=np.float64)
-    distance_weight = distance_total
+    if MBE_DISTANCE_WEIGHT == "linear":
+        distance_weight = distance_total
+    elif MBE_DISTANCE_WEIGHT == "uniform":
+        distance_weight = np.ones_like(distance_total)
+    else:
+        distance_weight = 1.0 / np.maximum(distance_total ** 2, 1e-6)
     weight_sum = np.sum(distance_weight)
     if weight_sum <= 0:
         return 0
@@ -166,7 +177,7 @@ def classify_state(inter_points_number_total, convex_hull_number_total, distance
         c1 += score_r * score_d
         c2 += score_0 * score_d
 
-    if c1 < 0.1 and c2 > 0.7:
+    if c1 < MBE_PHI_R and c2 > MBE_PHI_O:
         return 1 
 
     return 0 

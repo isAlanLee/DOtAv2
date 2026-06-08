@@ -278,3 +278,11 @@
 - 当前判断：Step02 的低阈值候选并非完全无效，但召回仍有限；结合此前 MBE 每帧仅保留约 1 个 accepted 的诊断，AP 低的主要风险仍是 MBE 将本就有限的可用召回进一步大幅压缩。
 - 新增 `scripts/diagnose_label_recall.py`，用于统一评估 `pseudo`、`mbe`、`mbe-score` 三类保存标签相对完整 GT 的 recall/AP，从而直接比较 MBE 前后召回变化。
 - 验证：`python -m py_compile scripts/diagnose_label_recall.py` 通过；`git diff --check -- scripts/diagnose_label_recall.py` 未发现空白错误；已清理 `scripts/__pycache__`。
+
+## 2026-06-08 19:27:13 +08:00
+- 用户运行 `scripts/diagnose_label_recall.py --source mbe`，当前 MBE accepted 标签在 train split 抽样 250 帧中平均仅 0.98 个框/帧，中位数 1 个框/帧，98/250 帧为空。
+- MBE accepted 相对完整 GT 的 recall/AP 极低：IoU 0.3 recall 0.0574/AP 0.0573，IoU 0.5 recall 0.0574/AP 0.0573，IoU 0.7 recall 0.0556/AP 0.0547。
+- 对比 Step02 初始伪标签 `score >= 0.01` 的 IoU 0.5 recall 0.3460，MBE 后只剩 0.0574，确认当前 AP 低的核心瓶颈是 MBE 过滤后正伪标签召回大幅坍缩。
+- 修改 `opencood/tools/MBE.py`：默认距离权重恢复为 DOtA 论文式 inverse-square distance；新增环境变量 `DOTA_MBE_DISTANCE_WEIGHT` 支持 `inverse_square`、`linear`、`uniform`，便于复现实验但默认对齐论文。
+- 同时新增环境变量 `DOTA_MBE_PHI_R` 与 `DOTA_MBE_PHI_O`，默认仍为论文阈值 `0.1/0.7`，便于服务器上直接做 `phi_o` 放宽消融而无需反复改源码。
+- 验证：`python -m py_compile opencood/tools/MBE.py` 通过；`git diff --check -- opencood/tools/MBE.py codex.md` 未发现空白错误，仅有 Windows 工作区 LF/CRLF 提示；已清理 `opencood/tools/__pycache__`。
