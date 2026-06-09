@@ -46,6 +46,8 @@ def test_parser():
                         help='whether to globally sort detections by confidence score.'
                              'If set to True, it is the mainstream AP computing method,'
                              'but would increase the tolerance for FP (False Positives).')
+    parser.add_argument('--max_samples', type=int, default=-1,
+                        help='Maximum number of samples to evaluate. Use -1 for all samples.')
     opt = parser.parse_args()
     return opt
 
@@ -118,7 +120,13 @@ def main():
         os.makedirs(pre_score_path)
     
 
-    for i, batch_data in tqdm(enumerate(data_loader)):
+    total_batches = len(data_loader)
+    if opt.max_samples > 0:
+        total_batches = min(total_batches, opt.max_samples)
+
+    for i, batch_data in tqdm(enumerate(data_loader), total=total_batches):
+        if opt.max_samples > 0 and i >= opt.max_samples:
+            break
         # print(i)
         with torch.no_grad():
             batch_data = train_utils.to_device(batch_data, device)

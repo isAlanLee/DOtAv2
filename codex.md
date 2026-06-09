@@ -320,3 +320,23 @@
 - 论文式 inverse-square MBE 的 recall/AP 相比 linear 有提升：IoU 0.5 recall 从约 0.0574 提升到约 0.0937，AP 从约 0.0573 提升到约 0.0862；但仍显著低于 Step02 `score>=0.01` 的 IoU 0.5 recall 0.3460。
 - 新增 `scripts/diagnose_mbe_threshold_recall.py`：不改写 MBE 输出文件，在抽样帧上重算不同 `phi_r/phi_o` 下的 MBE accepted，并直接计算相对完整 GT 的 recall/AP，用于判断阈值消融是否值得全量重跑。
 - 验证：`python -m py_compile scripts/diagnose_mbe_threshold_recall.py` 通过；`git diff --check -- scripts/diagnose_mbe_threshold_recall.py codex.md` 未发现空白错误，仅有 Windows 工作区 LF/CRLF 提示；已清理 `scripts/__pycache__`。
+
+## 2026-06-08 20:27:58 +08:00
+- 用户运行 `scripts/diagnose_mbe_threshold_recall.py`，在 250 帧、全部初始伪标签候选上重算 inverse 权重下不同 `phi_o` 的 MBE recall/AP。
+- `phi_o=0.7`：平均 1.74 框/帧，空帧 21/250，IoU 0.5 recall 0.0937，AP 0.0927。
+- `phi_o=0.6`：平均 2.60 框/帧，空帧 5/250，IoU 0.5 recall 0.1394，AP 0.1372。
+- `phi_o=0.5`：平均 3.436 框/帧，空帧 4/250，IoU 0.5 recall 0.1763，AP 0.1717。
+- `phi_o=0.4`：平均 4.372 框/帧，空帧 3/250，IoU 0.5 recall 0.2074，AP 0.1986。
+- 当前判断：`phi_o=0.7` 对当前初始伪标签过严；`phi_o=0.4` 能显著恢复 MBE 后 recall/AP，接近 Step02 初始伪标签 AP，但仍低于 Step02 `score>=0.01` 的 IoU 0.5 recall 0.3460。
+
+## 2026-06-09 10:42:09 +08:00
+- 用户询问当前低 AP 是否可能由初始检测器过拟合导致。
+- 结合此前结果：初始 label-free detector 在 train split 完整 GT AP 约 0.13，在 validate split 完整 GT AP 约 0.12，二者差距很小，因此不符合经典“训练集高、验证集低”的过拟合特征。
+- 更合理解释是 label-free 初始训练的稀疏免费标签目标被模型拟合得很好，训练 loss 降到很低，但该目标与完整 GT 检测目标存在明显偏差，导致完整 GT AP 和 Step02 伪标签 recall 都有限。
+- 建议进一步用不同 epoch 的初始 checkpoint 分别评估 train/validate AP 与 Step02 pseudo recall；如果早期 epoch 的 pseudo recall 明显更高而后期下降，才说明存在过训练/过拟合迹象。
+
+## 2026-06-09 10:44:21 +08:00
+- 用户反馈全量评估太慢，询问是否可以只评估前 250 个样本。
+- 修改 `opencood/tools/inference.py`：新增命令行参数 `--max_samples`，默认 `-1` 表示全量评估；传入正整数时只评估 dataloader 前 N 个样本。
+- 该修改不影响现有流水线默认行为，也可用于快速比较初始 detector 的不同 epoch。
+- 验证：`python -m py_compile opencood/tools/inference.py` 通过；`git diff --check -- opencood/tools/inference.py codex.md` 未发现空白错误，仅有 Windows 工作区 LF/CRLF 提示；已清理 `opencood/tools/__pycache__`。
